@@ -1,6 +1,8 @@
+// services/aiService.js
 const { OpenAI } = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Твій новий структурований стандарт
 const DEFAULT_PROMPT = `Ти — досвідчений редактор Telegram-каналу.
 Створи красивий пост з новини. СТРУКТУРА ПОСТУ (строго дотримуйся):
 1. Перший рядок — емодзі + короткий цепляючий ЗАГОЛОВОК у тегах <b></b>
@@ -9,22 +11,12 @@ const DEFAULT_PROMPT = `Ти — досвідчений редактор Telegra
 4. Порожній рядок
 5. Рядок з тегами/хештегами (1-3 штуки, наприклад: #технології #AI #новини)`;
 
-
 const sanitizeForTelegram = (text) => {
     if (!text) return '';
-    
     return text
-        // 1. Перетворюємо заголовки HTML на жирний текст
         .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, '<b>$1</b>')
-        
-        // 2. Дозволяємо ТІЛЬКИ теги: b, i, code, pre, a
-        // Видаляємо всі інші HTML теги
         .replace(/<(?!\/?(?:b|i|code|pre|a)(?:\s[^>]*)?>)[^>]+>/gi, '')
-        
-        // 3. Замінюємо 3 і більше переносів рядка на 2
         .replace(/\n{3,}/g, '\n\n')
-        
-        // 4. Видаляємо зайві пробіли на початку та в кінці
         .trim();
 };
 
@@ -33,6 +25,7 @@ const rewriteNews = async (title, content, customPrompt = null) => {
         const response = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
+                // Якщо customPrompt порожній (null), беремо DEFAULT_PROMPT
                 { role: "system", content: customPrompt || DEFAULT_PROMPT },
                 { role: "user", content: `Заголовок: ${title}\nТекст: ${content}` }
             ],

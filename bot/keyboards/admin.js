@@ -84,7 +84,7 @@ const getUsersKeyboard = (users, currentPage, totalPages) => {
  */
 const getChannelsKeyboard = (channels, currentPage, totalPages) => {
     const keyboard = channels.map(ch => ([{
-        text: `${ch.isActive ? '✅' : '❌'} ${ch.name || 'Без назви'} (@${ch.userId?.username || 'ID:' + ch.userId?.telegramId})`,
+        text: `${ch.isActive ? '✅' : '❌'} ${ch.channelUsername || 'Без назви'} (@${ch.userId?.username || 'ID:' + ch.userId?.telegramId})`,
         callback_data: `admin_ch_view_${ch._id}`
     }]));
 
@@ -138,8 +138,8 @@ const getPlanEditKeyboard = (planId, isAiEnabled) => {
 const getConfirmKeyboard = (action, targetId) => ({
     inline_keyboard: [
         [
-            { text: '✅ ТАК, впевнений', callback_data: `confirm_yes_${action}_${targetId}` },
-            { text: '❌ НІ, скасувати', callback_data: `admin_dashboard` }
+            { text: '✅ ТАК, впевнений', callback_data: `admin_confirm_${action}_${targetId}` },
+            { text: '❌ НІ, скасувати', callback_data: `admin_users` }
         ]
     ]
 });
@@ -150,7 +150,7 @@ const getUserManageKeyboard = (userId, isBlocked) => {
                 { text: '💎 Змінити тариф', callback_data: `admin_user_plan_${userId}` }
             ],
             [
-                { text: '🗑 Видалити', callback_data: `admin_user_delete_${userId}` }
+                { text: '🗑 Видалити', callback_data: `admin_user_delete_request_${userId}` }
             ],
             [
                 { text: '🔙 Назад до списку', callback_data: 'admin_users' }
@@ -162,7 +162,7 @@ function getChannelAdminControlKeyboard(chId, isActive) {
     return {
         inline_keyboard: [
             [{ text: '⚙️ Налаштування джерел', callback_data: `admin_ch_sources_${chId}` }, ],
-            [{ text: '🗑 Видалити Акаунт', callback_data: `admin_ch_delete_${chId}` }],
+            [{ text: '🗑 Видалити канал', callback_data: `admin_ch_delete_${chId}` }],
             [{ text: '⬅️ Назад до списку', callback_data: 'admin_channels_list' }]
         ]
     };

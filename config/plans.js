@@ -1,4 +1,12 @@
 const PLANS = {
+    free: {
+        title: "FREE",
+        stars: 0,
+        maxChannels: 1,
+        maxPostsPerDay: 5,
+        canCustomPrompt: false,
+        description: "• 1 канал\n• 5 постів на день\n• без зміни промпту"
+    },
     basic: {
         title: "BASIC",
         stars: 200,
@@ -18,7 +26,7 @@ const PLANS = {
     business: {
         title: "BUSINESS",
         stars: 1,
-        maxChannels: 100, // Умовний безліміт
+        maxChannels: 100,
         maxPostsPerDay: 9999,
         canCustomPrompt: true,
         description: "• безліміт каналів\n• безліміт постів\n• зміна AI промпту"

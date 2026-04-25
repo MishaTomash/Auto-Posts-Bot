@@ -1,41 +1,50 @@
-const getChannelSettingsKeyboard = (ch, user) => {
-    const toggleText = ch.isEnabled ? "🛑 Зупинити проєкт" : "🚀 Запустити проєкт";
-    const plan = user?.subscription?.plan || 'free';
+// keyboards/channel.js
 
+const getChannelSettingsKeyboard = (ch, user) => {
+    // 1. Визначаємо текст для перемикача (Toggle)
+    // Використовуємо isActive або isEnabled залежно від того, що у тебе в логіці головне
+    const toggleText = ch.isActive ? "⏸ Призупинити роботу" : "🚀 Запустити проєкт";
+    const toggleAction = `user_ch_toggle_${ch._id}`;
+
+    const plan = user?.subscription?.plan || 'free';
     const canUseAI = user?.role === 'admin' ||
         user?.subscription?.hasCustomPrompt === true ||
         (plan !== 'free' && plan !== 'FREE');
 
-    console.log(`DEBUG: Plan=${plan}, hasAI=${user?.subscription?.hasCustomPrompt}, FinalCanUse=${canUseAI}`);
-
     const keyboard = [
-        [{ text: '🔄 Перевірити зараз', callback_data: `check_one_${ch._id}` }],
-        [{ text: '📋 Джерела (RSS/JSON)', callback_data: `sources_list_${ch._id}` }],
-        [{ text: '⏱ Інтервал', callback_data: `edit_interval_${ch._id}` }],
+        [{ text: '🔄 Перевірити джерела зараз', callback_data: `check_one_${ch._id}` }],
+        [{ text: toggleText, callback_data: toggleAction }],
+
+        [
+            { text: '📂 Джерела', callback_data: `sources_list_${ch._id}` },
+            { text: '⏱ Інтервал', callback_data: `edit_interval_${ch._id}` }
+        ],
         [{
-            text: canUseAI ? '🤖 AI Промпт' : '🔒 AI Промпт (Pro/Biz)',
+            text: canUseAI ? '🤖 AI Налаштування' : '🔒 AI Налаштування (Premium)',
             callback_data: canUseAI ? `edit_prompt_${ch._id}` : `locked_feature_ai`
         }],
-        [{ text: toggleText, callback_data: `admin_ch_toggle_${ch._id}` }],
-        [{ text: '🗑 Видалити канал', callback_data: `del_${ch._id}` }],
-        [{ text: '⬅️ Мої канали', callback_data: 'list_channels' }, { text: '🏠 Меню', callback_data: 'main_menu' }]
+
+        [{ text: '🔗 Перейти в канал', url: `https://t.me/${ch.channelUsername?.replace('@', '')}` }],
+
+        [{ text: '🗑 Видалити цей проєкт', callback_data: `del_${ch._id}` }],
+
+        [
+            { text: '⬅️ Мої проєкти', callback_data: 'list_channels' },
+            { text: '🏠 Меню', callback_data: 'main_menu' }
+        ]
     ];
 
     return keyboard;
 };
+
 const getIntervalKeyboard = (ch) => {
-    // Змінюємо аргумент з chId на ch (об'єкт), 
-    // або переконуємось, що передаємо саме ID.
-    // Найбезпечніше звертатися ch._id або ch (якщо це вже ID)
-
-
     const id = ch._id || ch;
 
     return [
         [{ text: '15 хв', callback_data: `set_int_${id}_15` }, { text: '30 хв', callback_data: `set_int_${id}_30` }],
         [{ text: '1 год', callback_data: `set_int_${id}_60` }, { text: '3 год', callback_data: `set_int_${id}_180` }],
         [{ text: '6 год', callback_data: `set_int_${id}_360` }, { text: '12 год', callback_data: `set_int_${id}_720` }],
-        [{ text: '⬅️ Назад', callback_data: `manage_${id}` }]
+        [{ text: '⬅️ Назад до налаштувань', callback_data: `manage_${id}` }]
     ];
 };
 

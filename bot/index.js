@@ -68,12 +68,12 @@ async function showChannelSettings(chatId, channelId, messageId = null, user = n
         // === DEBUG БЛОК (якщо тут впаде - значить channel реально null) ===
         console.log(`DEBUG: Канал=${channel.channelUsername}, Enabled=${channel.isEnabled}`);
 
-        const projectStatus = channel.isEnabled ? "🟢 АКТИВНИЙ" : "🔴 НА ПАУЗІ";
+        const projectStatus = channel.isActive ? "🟢 АКТИВНИЙ" : "🔴 НА ПАУЗІ";
 
         const text = `⚙️ Керування: <b>${channel.channelUsername}</b>\n\n` +
             `📊 Стан проєкту: <b>${projectStatus}</b>\n` +
             `⏱ Інтервал: ${channel.checkInterval} хв\n` +
-            `📱 Джерела: TG(${channel.tgSources?.length || 0}) | RSS(${channel.rssUrls.length})`;
+            `📱 Джерела: TG(${channel.tgSources?.length || 0})  | RSS(${channel.rssUrls.length} | JSON(${channel.jsonSources.length})`;
 
         const opts = {
             parse_mode: 'HTML',

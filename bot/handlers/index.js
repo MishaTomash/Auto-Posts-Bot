@@ -3,10 +3,11 @@ const Channel = require('../../models/Channel');
 const { validateRSS } = require('../../services/rssService');
 const { validateJSON } = require('../../services/jsonService')
 const { cancelMenu } = require('../keyboards/main');
-const { renderPromptSettings } = require('../callbacks/index'); // Потрібно буде експортувати її або перенести
 const Plan = require('../../models/Plan');
 const { getUsersList } = require('../../services/adminService');
 const { getUsersKeyboard } = require('../keyboards/admin');
+const { renderPromptSettings, renderSourcesList } = require('../callbacks/ui_renderers');
+
 
 module.exports = async (bot, msg, callbacks) => {
     const chatId = msg.chat.id;
@@ -126,7 +127,7 @@ module.exports = async (bot, msg, callbacks) => {
                     isActive: true,
                     // aiPrompt за замовчуванням візьметься зі схеми, якщо тут не вказувати, 
                     // але про всяк випадок дублюємо дефолт:
-                    aiPrompt: "Зроби цікавий рерайт цієї новини для Telegram каналу. Використовуй емодзі та короткі речення.",
+                    aiPrompt: null,
                     rssUrls: [],
                     tgSources: [],
                     jsonSources: []
@@ -284,63 +285,29 @@ module.exports = async (bot, msg, callbacks) => {
         }
         if (state === 'EDIT_PROMPT') {
             if (!editingId) return;
+
+            // 1. Беремо ID повідомлення, яке треба "перетворити" назад на меню
+            const menuId = user.tempData.menuMessageId;
+
+            // 2. Зберігаємо текст у базу
             await Channel.findByIdAndUpdate(editingId, { aiPrompt: text.trim() });
+
+            // 3. Очищаємо стан
             await User.findOneAndUpdate(
                 { telegramId: chatId.toString() },
-                { tempState: null, 'tempData.editingChannelId': null }
+                { tempState: null, tempData: {} }
             );
+
+            // 4. Видаляємо повідомлення з текстом, який написав користувач (чистимо чат)
             bot.deleteMessage(chatId, msg.message_id).catch(() => { });
-            await bot.sendMessage(chatId, "✅ Промпт успішно збережено!");
 
-            if (callbacks && typeof callbacks.renderPromptSettings === 'function') {
-                return callbacks.renderPromptSettings(bot, chatId, menuId, editingId);
-            }
-            return callbacks.showChannelSettings(chatId, editingId);
-        }
-        if (state === 'WAITING_FOR_ADMIN_USER_SEARCH') {
-            try {
-                // 1. Очищення запиту
-                let searchTerm = text.trim();
-
-                // Видаляємо @, якщо адмін ввів нікнейм із ним
-                if (searchTerm.startsWith('@')) {
-                    searchTerm = searchTerm.substring(1);
-                }
-
-                // Перевіряємо, чи не порожній запит після очищення
-                if (!searchTerm) {
-                    return bot.sendMessage(chatId, "⚠️ Введіть коректний ID або @username.");
-                }
-
-                // 2. Викликаємо сервіс із очищеним терміном
-                const { users, totalCount } = await getUsersList(1, 10, { search: searchTerm });
-
-                // 3. Скидаємо стан
-                await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null });
-
-                if (!users || users.length === 0) {
-                    return bot.sendMessage(chatId, `❌ Користувача "<b>${text}</b>" не знайдено.`, {
-                        parse_mode: 'HTML',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔍 Спробувати знову', callback_data: 'admin_user_search' }],
-                                [{ text: '🔙 До списку', callback_data: 'admin_users' }]
-                            ]
-                        }
-                    });
-                }
-
-                // 4. Результат
-                const resultText = `🔍 <b>Результати пошуку:</b>\nЗнайдено користувачів: <b>${totalCount}</b>`;
-
-                return bot.sendMessage(chatId, resultText, {
-                    parse_mode: 'HTML',
-                    reply_markup: getUsersKeyboard(users, 1, 1)
-                });
-
-            } catch (err) {
-                console.error("Handler search error:", err);
-                return bot.sendMessage(chatId, "⚠️ Помилка під час пошуку. Спробуйте пізніше.");
+            // 5. ОНОВЛЮЄМО СТАРЕ ПОВІДОМЛЕННЯ (замість інструкції показуємо знову налаштування)
+            if (menuId) {
+                // Редагуємо повідомлення, де була кнопка "Скасувати"
+                return renderPromptSettings(bot, chatId, menuId, editingId);
+            } else {
+                // Якщо раптом ID загубився — просто шлемо нове
+                return renderPromptSettings(bot, chatId, null, editingId);
             }
         }
         if (state === 'WAITING_BC_TEXT') {
@@ -387,53 +354,71 @@ module.exports = async (bot, msg, callbacks) => {
                 }
             });
         }
-        if (user.tempState === 'WAITING_TG_SOURCE') {
-            const targetChannelId = user.tempData.targetChannelId;
-            const sourceUrl = msg.text.trim();
+if (user.tempState === 'WAITING_TG_SOURCE') {
+    const targetChannelId = user.tempData.targetChannelId;
+    // Переконайтеся, що ви використовуєте правильний об'єкт повідомлення (msg або message)
+    const sourceUrl = (msg.text || "").trim(); 
 
-            // Мінімальна перевірка посилання
-            if (!sourceUrl.includes('t.me/') && !sourceUrl.startsWith('@')) {
-                return bot.sendMessage(chatId, "❌ Це не схоже на посилання Telegram. Спробуйте ще раз або скасуйте дію.");
+    if (!sourceUrl.includes('t.me/') && !sourceUrl.startsWith('@')) {
+        return bot.sendMessage(chatId, "❌ Це не схоже на посилання Telegram. Спробуйте ще раз або скасуйте дію.");
+    }
+
+    // Додаємо в базу
+    const channel = await Channel.findByIdAndUpdate(targetChannelId, {
+        $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
+    }, { new: true });
+
+    // Скидаємо стан
+    await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
+
+    await bot.sendMessage(chatId, "✅ Джерело додано! Бот почне стежити за новими постами в цьому каналі.");
+
+    // ПІДКАЗКА: Викличте функцію рендеру списку джерел, щоб юзер відразу побачив оновлення
+    return renderSourcesList(bot, chatId, user.lastMenuMessageId, targetChannelId);
+}
+
+        if (state === 'WAITING_FOR_ADMIN_USER_SEARCH') {
+            const searchTerm = text.trim().replace('@', '');
+
+            // Викликаємо сервіс з фільтром пошуку
+            const { users, totalCount } = await getUsersList(1, 10, { search: searchTerm });
+
+            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null });
+            bot.deleteMessage(chatId, msg.message_id).catch(() => { });
+
+            if (!users || users.length === 0) {
+                return bot.sendMessage(chatId, `❌ Користувача <b>${searchTerm}</b> не знайдено.`, {
+                    parse_mode: 'HTML',
+                    reply_markup: { inline_keyboard: [[{ text: '🔍 Спробувати знову', callback_data: 'admin_user_search' }]] }
+                });
             }
 
-            await Channel.findByIdAndUpdate(targetChannelId, {
-                $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
+            // Показуємо результат через клавіатуру списку (як на фото 2)
+            return bot.sendMessage(chatId, `🔍 Знайдено результатів: ${totalCount}`, {
+                parse_mode: 'HTML',
+                reply_markup: getUsersKeyboard(users, 1, 1)
             });
-
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
-
-            return bot.sendMessage(chatId, "✅ Джерело додано! Бот почне стежити за новими постами в цьому каналі.");
         }
 
-        if (user && user.tempState && user.tempState.startsWith('ADMIN_PLAN_EDIT_')) {
-            const fieldType = user.tempState.replace('ADMIN_PLAN_EDIT_', '').toLowerCase();
+        // 2. Редагування тарифів (Твій код, який ти надіслав останнім)
+        if (state && state.startsWith('ADMIN_PLAN_EDIT_')) {
+            const fieldType = state.replace('ADMIN_PLAN_EDIT_', '').toLowerCase();
             const planId = user.tempData.editingPlanId;
-            const newValue = parseInt(msg.text);
+            const newValue = parseInt(text);
 
-            if (isNaN(newValue)) {
-                return bot.sendMessage(chatId, "❌ Помилка: Введіть числове значення (наприклад: 100).");
-            }
+            if (isNaN(newValue)) return bot.sendMessage(chatId, "❌ Введіть число.");
 
             const updateData = {};
             if (fieldType === 'price') updateData.price = newValue;
             if (fieldType === 'channels') updateData.maxChannels = newValue;
             if (fieldType === 'posts') updateData.maxPostsPerDay = newValue;
 
-            try {
-                await Plan.findByIdAndUpdate(planId, updateData);
+            await Plan.findByIdAndUpdate(planId, updateData);
+            await User.updateOne({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
 
-                // Скидаємо стан
-                await User.updateOne({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
-
-                return bot.sendMessage(chatId, "✅ Дані тарифу успішно оновлено!", {
-                    reply_markup: {
-                        inline_keyboard: [[{ text: '📊 Назад до тарифу', callback_data: `admin_plan_view_${planId}` }]]
-                    }
-                });
-            } catch (err) {
-                console.error("Plan Update Error:", err);
-                await bot.sendMessage(chatId, "❌ Помилка при збереженні в базу.");
-            }
+            return bot.sendMessage(chatId, "✅ Тариф оновлено!", {
+                reply_markup: { inline_keyboard: [[{ text: '📊 Назад', callback_data: `admin_plan_view_${planId}` }]] }
+            });
         }
 
         // 1. Обробка Telegram джерела

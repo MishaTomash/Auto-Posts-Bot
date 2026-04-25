@@ -1,0 +1,315 @@
+// bot/callbacks/channels.js
+
+const User = require('../../models/User');
+const Channel = require('../../models/Channel');
+const { processNews, processSingleChannel } = require('../../services/postService');
+
+// Клавіатури
+const { cancelMenu } = require('../keyboards/main');
+const { getChannelSettingsKeyboard, getIntervalKeyboard } = require('../keyboards/channel');
+
+// Рендерери
+const { renderSourcesList, renderPromptSettings, renderChannelSettings } = require('./ui_renderers');
+
+const channelHandler = async (bot, query, user, callbacks) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    const messageId = query.message.message_id;
+
+    try {
+        if (data.startsWith('add_rss_')) {
+            const id = data.slice(8);
+            await User.findOneAndUpdate({ telegramId: chatId.toString() }, {
+                tempState: 'WAITING_FOR_RSS',
+                'tempData.editingChannelId': id,
+                lastMenuMessageId: messageId
+            });
+            return bot.editMessageText("🌐 <b>Введіть нове RSS-посилання:</b>", {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                ...cancelMenu(`sources_list_${id}`)
+            });
+        }
+
+        if (data.startsWith('add_tgsrc_')) {
+            const channelId = data.split('_')[2];
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                {
+                    tempState: 'WAITING_TG_SOURCE',
+                    tempData: { targetChannelId: channelId }
+                }
+            );
+            const originalText =
+                "📱 <b>Додавання Telegram-джерела</b>\n\n" +
+                "Надішліть посилання на канал, за яким треба стежити.\n\n" +
+                "Приклади:\n" +
+                "• <code>https://t.me/username</code>\n" +
+                "• <code>@username</code>\n\n" +
+                "<i>Бот буде автоматично робити рерайт нових постів з цього каналу.</i>";
+
+            return bot.editMessageText(originalText, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                ...cancelMenu(`sources_list_${channelId}`)
+            });
+        }
+
+        if (data.startsWith('add_json_')) {
+            const channelId = data.replace('add_json_', '');
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                {
+                    tempState: 'WAITING_FOR_JSON',
+                    tempData: { editingChannelId: channelId, menuMessageId: messageId }
+                }
+            );
+            return bot.editMessageText("🌐 <b>Введіть посилання на JSON-джерело:</b>", {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                ...cancelMenu(`sources_list_${channelId}`)
+            });
+        }
+
+        // Кнопка "Назад" у процесі додавання JSON
+        if (data.startsWith('add_json_back_')) {
+            const channelId = data.replace('add_json_back_', '');
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                { tempState: null, tempData: {} }
+            );
+            return renderSourcesList(bot, chatId, messageId, channelId);
+        }
+
+        // --- СПИСОК КАНАЛІВ ---
+        if (data === 'list_channels') {
+            const channels = await Channel.find({ userId: user._id });
+            if (channels.length === 0) {
+                return bot.editMessageText("📊 <b>Список порожній.</b>", {
+                    chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '➕ Створити проект', callback_data: 'start_wizard' }],
+                            [{ text: '🏠 Меню', callback_data: 'main_menu' }]
+                        ]
+                    }
+                });
+            }
+            const keyboard = channels.map(ch => ([{
+                text: `📺 ${ch.channelUsername || "Без назви"} (/${ch.checkInterval}хв)`,
+                callback_data: `manage_${ch._id}`
+            }]));
+            keyboard.push([{ text: '🚀 Перевірити всі зараз', callback_data: 'force_check_all' }]);
+            keyboard.push([{ text: '⬅️ Назад', callback_data: 'main_menu' }]);
+
+            return bot.editMessageText("📊 <b>Ваші канали:</b>", {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard }
+            });
+        }
+
+        // --- ГОЛОВНЕ МЕНЮ КАНАЛУ (MANAGE) ---
+        if (data.startsWith('manage_') || data.startsWith('menu_settings_')) {
+            const channelId = data.includes('manage_') ? data.split('_')[1] : data.split('_')[2];
+            const channel = await Channel.findById(channelId);
+            if (!channel) return bot.answerCallbackQuery(query.id, { text: "❌ Канал не знайдено" });
+
+            // Викликаємо наш новий багатий рендерер
+            return renderChannelSettings(bot, chatId, messageId, channel, user);
+        }
+
+        // --- КЕРУВАННЯ ДЖЕРЕЛАМИ (SOURCES) ---
+        if (data.startsWith('sources_list_')) {
+            return renderSourcesList(bot, chatId, messageId, data.slice(13));
+        }
+
+        if (data.startsWith('remove_rss_') || data.startsWith('remove_json_') || data.startsWith('remove_tgsrc_')) {
+            const parts = data.split('_');
+            const type = parts[1]; // rss, json, tgsrc
+            const chId = parts[2];
+            const index = parseInt(parts[3]);
+
+            const ch = await Channel.findById(chId);
+            if (ch) {
+                if (type === 'rss') ch.rssUrls.splice(index, 1);
+                else if (type === 'json') ch.jsonSources.splice(index, 1);
+                else if (type === 'tgsrc') ch.tgSources.splice(index, 1);
+
+                await ch.save();
+                await bot.answerCallbackQuery(query.id, { text: "Видалено" });
+                return renderSourcesList(bot, chatId, messageId, chId);
+            }
+        }
+
+        // --- ІНТЕРВАЛИ ПЕРЕВІРКИ ---
+        if (data.startsWith('edit_interval_')) {
+            return bot.editMessageText("⏱ <b>Змінити інтервал</b>", {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: getIntervalKeyboard(data.slice(14)) }
+            });
+        }
+
+        if (data.startsWith('set_int_')) {
+            const [, , chId, minutes] = data.split('_');
+            const updatedChannel = await Channel.findByIdAndUpdate(
+                chId,
+                { checkInterval: parseInt(minutes) },
+                { new: true }
+            );
+            return renderChannelSettings(bot, chatId, messageId, updatedChannel, user);
+        }
+
+        // --- ПЕРЕВІРКА ТА СТАТУС ---
+        if (data.startsWith('check_one_')) {
+            const chId = data.slice(10);
+            const ch = await Channel.findById(chId);
+            if (!ch) return;
+
+            await bot.answerCallbackQuery(query.id, { text: "⏳ Перевірка запущена..." });
+
+            // 1. Запускаємо перевірку
+            await processSingleChannel(bot, ch);
+
+            // 2. Отримуємо ОНОВЛЕНІ дані з бази (де вже є новий lastCheckAt)
+            const updatedCh = await Channel.findById(chId);
+
+            // 3. Оновлюємо існуюче вікно налаштувань
+            await renderChannelSettings(bot, chatId, messageId, updatedCh, user);
+
+            // 4. Надсилаємо повідомлення про успіх (опціонально, можна і без нього)
+            return bot.sendMessage(chatId, `✅ Перевірка <b>${updatedCh.channelUsername}</b> завершена!`, { parse_mode: 'HTML' });
+        }
+
+        if (data === 'force_check_all') {
+            await bot.answerCallbackQuery(query.id, { text: "🚀 Запуск загальної перевірки" });
+            await processNews(bot, user._id);
+            return bot.sendMessage(chatId, "✅ Всі канали перевірено!");
+        }
+
+        // --- AI ПРОМПТИ ---
+        if (data.startsWith('edit_prompt_')) {
+            const chId = data.replace('edit_prompt_', '');
+            const plan = user.subscription?.plan || 'free';
+            const canEdit = user.role === 'admin' || user.subscription?.hasCustomPrompt || plan !== 'free';
+
+            if (!canEdit) {
+                return bot.editMessageText(`⚠️ <b>AI Промпти недоступні</b>\n\nНа тарифі FREE діє стандартний алгоритм.`, {
+                    chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🚀 Оновити тариф', callback_data: 'subscription_shop' }],
+                            [{ text: '🔙 Назад', callback_data: `manage_${chId}` }]
+                        ]
+                    }
+                });
+            }
+            return renderPromptSettings(bot, chatId, messageId, chId);
+        }
+
+        // --- ВИДАЛЕННЯ КАНАЛУ ---
+        if (data.startsWith('del_')) {
+            const chId = data.slice(4);
+            return bot.editMessageText(`⚠️ <b>Підтвердження видалення</b>\n\nВсі дані будуть втрачені.`, {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🗑 Так, видалити', callback_data: `confirm_del_${chId}` }],
+                        [{ text: '⬅️ Скасувати', callback_data: `manage_${chId}` }]
+                    ]
+                }
+            });
+        }
+
+        if (data.startsWith('confirm_del_')) {
+            await Channel.findByIdAndDelete(data.slice(12));
+            await bot.answerCallbackQuery(query.id, { text: "✅ Видалено" });
+            return callbacks.sendMainMenu(chatId, messageId);
+        }
+        // bot/callbacks/channels.js (або інший файл обробки юзерів)
+        if (data.startsWith('user_ch_toggle_')) {
+            const channelId = data.replace('user_ch_toggle_', '');
+            const userId = user._id;
+
+            try {
+                const channel = await Channel.findById(channelId);
+                if (!channel) return bot.answerCallbackQuery(query.id, { text: "❌ Проєкт не знайдено" });
+
+                if (channel.userId.toString() !== userId.toString() && user.role !== 'admin') {
+                    return bot.answerCallbackQuery(query.id, { text: "⛔ Це не ваш проєкт!" });
+                }
+
+                channel.isActive = !channel.isActive;
+                await channel.save();
+
+                await bot.answerCallbackQuery(query.id, {
+                    text: channel.isActive ? "🚀 Працюю" : "⏸ Призупинено"
+                });
+
+                // ВИПРАВЛЕННЯ ТУТ:
+                // Замість showChannelSettings викликаємо renderChannelSettings
+                // Це гарантує, що меню оновиться, але залишиться "гарним" (з роздільниками та статистикою)
+                return renderChannelSettings(bot, chatId, messageId, channel, user);
+
+            } catch (e) {
+                console.error("🔴 Toggle Error:", e.message);
+            }
+        }
+
+
+        // --- РЕДАГУВАННЯ AI ПРОМПТУ (ЛОГІКА КНОПОК) ---
+
+        // 1. Натискання на "✏️ Змінити промпт"
+        if (data.startsWith('start_edit_prompt_')) {
+            const channelId = data.replace('start_edit_prompt_', '');
+            const ch = await Channel.findById(channelId);
+            if (!ch) return;
+
+            // Встановлюємо стан очікування тексту від юзера
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                {
+                    tempState: 'EDIT_PROMPT',
+                    'tempData.editingChannelId': channelId,
+                    'tempData.menuMessageId': messageId // ЗАПАМ'ЯТОВУЄМО ЦЕ ПОВІДОМЛЕННЯ
+                }
+            );
+
+            const text = `📝 <b>Редагування промпту</b>\n\n` +
+                `Канал: <b>${ch.channelUsername}</b>\n\n` +
+                `Будь ласка, <b>напишіть та відправте</b> новий текст промпту у цей чат.\n\n` +
+                `<i>Підказка: Опишіть, у якому стилі AI має робити рерайт (наприклад: "пиши професійно", "використовуй молодіжний сленг" тощо).</i>`;
+
+            return await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '❌ Скасувати', callback_data: `edit_prompt_${channelId}` }]
+                    ]
+                }
+            });
+        }
+
+        // 2. Натискання на "🔄 Скинути до стандартного"
+        if (data.startsWith('reset_prompt_')) {
+            const chId = data.slice(13);
+
+            // 1. Скидаємо в базі
+            await Channel.findByIdAndUpdate(chId, { aiPrompt: null });
+
+            // 2. Відповідаємо Telegram (плашка зверху)
+            await bot.answerCallbackQuery(query.id, { text: "✅ Промпт скинуто до стандартного" });
+
+            // 3. Перемальовуємо вікно промпту (викликаємо наш новий рендерер)
+            // Тут messageId — це те саме повідомлення, на якому натиснули кнопку
+            return renderPromptSettings(bot, chatId, messageId, chId);
+        }
+    } catch (error) {
+        console.error("❌ Channels Handler Error:", error);
+    }
+};
+
+module.exports = channelHandler;

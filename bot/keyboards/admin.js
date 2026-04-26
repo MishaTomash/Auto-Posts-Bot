@@ -161,37 +161,39 @@ const getUserManageKeyboard = (userId, isBlocked) => {
 function getChannelAdminControlKeyboard(chId, isActive) {
     return {
         inline_keyboard: [
-            [{ text: '⚙️ Налаштування джерел', callback_data: `admin_ch_sources_${chId}` }, ],
+            [{ text: '⚙️ Налаштування джерел', callback_data: `admin_ch_sources_${chId}` },],
             [{ text: '🗑 Видалити канал', callback_data: `admin_ch_delete_${chId}` }],
             [{ text: '⬅️ Назад до списку', callback_data: 'admin_channels_list' }]
         ]
     };
 }
-function getChannelSourcesKeyboard(chId, jsonSources = [], tgSources = []) {
+function getChannelSourcesKeyboard(chId, tgSources = []) {
     const buttons = [];
 
-    // Відображаємо JSON джерела
-    if (Array.isArray(jsonSources) && jsonSources.length > 0) {
-        jsonSources.forEach((src, index) => {
-            buttons.push([{
-                text: `🌐 JSON: ${src.url.substring(0, 20)}...`,
-                callback_data: `admin_src_view_json_${chId}_${index}`
-            }]);
-        });
-    }
-
-    // Відображаємо Telegram джерела (НОВЕ)
+    // Відображаємо ТІЛЬКИ Telegram джерела
     if (Array.isArray(tgSources) && tgSources.length > 0) {
         tgSources.forEach((src, index) => {
-            const name = src.url.split('/').pop() || 'TG Channel';
+            // Отримуємо чистий юзернейм для тексту кнопки
+            // Наприклад з "https://t.me/example" або "@example" робимо "example"
+            let displayName = src.url.replace('https://t.me/', '').replace('@', '');
+
+            // Якщо посилання занадто довге (наприклад, приватне посилання), обрізаємо його
+            if (displayName.length > 15) {
+                displayName = displayName.substring(0, 15) + '...';
+            }
+
             buttons.push([{
-                text: `📢 TG: @${src.url.split('/').pop()}`,
+                text: `📢 TG: @${displayName}`,
                 callback_data: `admin_src_view_tg_${chId}_${index}`
             }]);
         });
     }
 
-    buttons.push([{ text: '⬅️ Назад до каналу', callback_data: `admin_ch_view_${chId}` }]);
+    // Кнопки навігації
+    buttons.push([{
+        text: '⬅️ Назад до каналу',
+        callback_data: `admin_ch_view_${chId}`
+    }]);
 
     return { inline_keyboard: buttons };
 }

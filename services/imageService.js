@@ -5,11 +5,12 @@ const https = require('https');
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY || null;
 
 /**
- * Шукаємо фото на Unsplash за ключовими словами
+ * Шукаємо фото на Unsplash, якщо оригінального медіа немає
+ * Використовується як фолбек для текстових постів
  */
 const getUnsplashImage = (query) => {
     return new Promise((resolve) => {
-        if (!UNSPLASH_ACCESS_KEY) {
+        if (!UNSPLASH_ACCESS_KEY || !query) {
             resolve(null);
             return;
         }
@@ -23,6 +24,7 @@ const getUnsplashImage = (query) => {
             res.on('end', () => {
                 try {
                     const json = JSON.parse(data);
+                    // Повертаємо URL картинки
                     resolve(json.urls?.regular || null);
                 } catch {
                     resolve(null);
@@ -32,48 +34,4 @@ const getUnsplashImage = (query) => {
     });
 };
 
-/**
- * Перевіряємо чи доступне фото за URL
- */
-const isImageAccessible = (url) => {
-    return new Promise((resolve) => {
-        try {
-            const urlObj = new URL(url);
-            const lib = urlObj.protocol === 'https:' ? https : require('http');
-            
-            const req = lib.request({ 
-                method: 'HEAD', 
-                hostname: urlObj.hostname, 
-                path: urlObj.pathname + urlObj.search,
-                timeout: 5000
-            }, (res) => {
-                resolve(res.statusCode >= 200 && res.statusCode < 400);
-            });
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
-            req.end();
-        } catch {
-            resolve(false);
-        }
-    });
-};
-
-/**
- * Головна функція: спочатку RSS фото, потім Unsplash, потім null
- */
-const getImageForPost = async (rssImageUrl, searchQuery) => {
-    // 1. Пробуємо фото з RSS
-    if (rssImageUrl) {
-        const accessible = await isImageAccessible(rssImageUrl);
-        if (accessible) return rssImageUrl;
-    }
-
-    // 2. Пробуємо Unsplash
-    const unsplashUrl = await getUnsplashImage(searchQuery);
-    if (unsplashUrl) return unsplashUrl;
-
-    // 3. Нічого не знайшли — відправимо без фото
-    return null;
-};
-
-module.exports = { getImageForPost };
+module.exports = { getUnsplashImage };

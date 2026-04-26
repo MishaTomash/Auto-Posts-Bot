@@ -139,35 +139,44 @@ const adminHandler = async (bot, query, user, callbackHandler) => {
         if (data.startsWith('admin_ch_sources_')) {
             const chId = data.replace('admin_ch_sources_', '');
             const channel = await Channel.findById(chId);
-            return bot.editMessageText(`📂 <b>Керування джерелами</b>`, {
+
+            if (!channel) {
+                return bot.answerCallbackQuery(query.id, { text: "❌ Канал не знайдено" });
+            }
+
+            return bot.editMessageText(`📂 <b>Керування Telegram-джерелами</b>\n\nТут ви можете налаштувати канали, з яких бот буде брати контент.`, {
                 chat_id: chatId,
                 message_id: messageId,
                 parse_mode: 'HTML',
-                reply_markup: getChannelSourcesKeyboard(chId, channel.jsonSources, channel.tgSources)
+                reply_markup: getChannelSourcesKeyboard(chId, channel.tgSources) // Тільки tgSources
             });
         }
 
         if (data.startsWith('admin_src_del_')) {
-            const [, , , type, chId, index] = data.split('_'); // type: json або tg
+            // data формат: admin_src_del_tg_CHID_INDEX
+            const parts = data.split('_');
+            const chId = parts[4];
+            const idx = parseInt(parts[5]);
+
             const channel = await Channel.findById(chId);
-            const idx = parseInt(index);
 
-            if (type === 'json') {
-                channel.jsonSources.splice(idx, 1);
-            } else if (type === 'tg') {
+            if (channel && channel.tgSources) {
+                // Видаляємо лише з масиву Telegram-джерел
                 channel.tgSources.splice(idx, 1);
+
+                await channel.save();
+                await bot.answerCallbackQuery(query.id, { text: "✅ Джерело видалено" });
+
+                // Повертаємось до оновленого списку (передаємо лише tgSources)
+                return bot.editMessageText(`📂 <b>Керування джерелами каналу</b>`, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    reply_markup: getChannelSourcesKeyboard(chId, channel.tgSources)
+                });
+            } else {
+                await bot.answerCallbackQuery(query.id, { text: "❌ Помилка: канал або джерело не знайдено" });
             }
-
-            await channel.save();
-            await bot.answerCallbackQuery(query.id, { text: "✅ Джерело видалено", show_alert: false });
-
-            // Повертаємось до оновленого списку джерел
-            return bot.editMessageText(`📂 <b>Керування джерелами каналу</b>`, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                reply_markup: getChannelSourcesKeyboard(chId, channel.jsonSources, channel.tgSources)
-            });
         }
         if (data.startsWith('admin_ch_view_')) {
             const chId = data.replace('admin_ch_view_', '');
@@ -325,13 +334,17 @@ const adminHandler = async (bot, query, user, callbackHandler) => {
         if (data.startsWith('admin_ch_sources_')) {
             const chId = data.replace('admin_ch_sources_', '');
             const channel = await Channel.findById(chId);
-            if (!channel) return bot.answerCallbackQuery(query.id, { text: "Канал не знайдено" });
 
-            return bot.editMessageText(`📂 <b>Керування джерелами каналу</b>`, {
+            if (!channel) {
+                return bot.answerCallbackQuery(query.id, { text: "❌ Канал не знайдено" });
+            }
+
+            // Оновлений текст та виклик клавіатури без JSON
+            return bot.editMessageText(`📂 <b>Керування Telegram-джерелами</b>\n\nВиберіть джерело для видалення або додайте нове.`, {
                 chat_id: chatId,
                 message_id: messageId,
                 parse_mode: 'HTML',
-                reply_markup: getChannelSourcesKeyboard(chId, channel.jsonSources, channel.tgSources)
+                reply_markup: getChannelSourcesKeyboard(chId, channel.tgSources)
             });
         }
         if (data === 'admin_export_users') {
@@ -408,33 +421,33 @@ const adminHandler = async (bot, query, user, callbackHandler) => {
                 reply_markup: getAdminPlansKeyboard(plans)
             });
         }
-if (data.startsWith('admin_ch_delete_')) {
-    const chId = data.split('_')[3];
+        if (data.startsWith('admin_ch_delete_')) {
+            const chId = data.split('_')[3];
 
-    try {
-        await bot.answerCallbackQuery(query.id, { text: "Канал видаляється..." });
+            try {
+                await bot.answerCallbackQuery(query.id, { text: "Канал видаляється..." });
 
-        await Channel.findByIdAndDelete(chId);
-        console.log(`[TMX] Канал ${chId} успішно видалено`);
+                await Channel.findByIdAndDelete(chId);
+                console.log(`[TMX] Канал ${chId} успішно видалено`);
 
-        // Повертаємось до списку каналів (сторінка 1)
-        const { channels, totalPages, totalCount } = await getChannelsList(1);
+                // Повертаємось до списку каналів (сторінка 1)
+                const { channels, totalPages, totalCount } = await getChannelsList(1);
 
-        return bot.editMessageText(
-            `📺 <b>Список усіх каналів</b> (${totalCount})\nСторінка 1/${totalPages}:`,
-            {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                reply_markup: getChannelsKeyboard(channels, 1, totalPages)
+                return bot.editMessageText(
+                    `📺 <b>Список усіх каналів</b> (${totalCount})\nСторінка 1/${totalPages}:`,
+                    {
+                        chat_id: chatId,
+                        message_id: messageId,
+                        parse_mode: 'HTML',
+                        reply_markup: getChannelsKeyboard(channels, 1, totalPages)
+                    }
+                );
+
+            } catch (e) {
+                console.error('Помилка в блоці видалення:', e);
+                await bot.answerCallbackQuery(query.id, { text: "Помилка при видаленні" }).catch(() => { });
             }
-        );
-
-    } catch (e) {
-        console.error('Помилка в блоці видалення:', e);
-        await bot.answerCallbackQuery(query.id, { text: "Помилка при видаленні" }).catch(() => {});
-    }
-}
+        }
         if (
             data === 'admin_channels' ||
             data === 'admin_channels_list' ||
@@ -451,23 +464,6 @@ if (data.startsWith('admin_ch_delete_')) {
                 message_id: messageId,
                 parse_mode: 'HTML',
                 reply_markup: getChannelsKeyboard(channels, page, totalPages)
-            });
-        }
-        // Перегляд деталей JSON джерела
-        if (data.startsWith('admin_src_view_json_')) {
-            const [, , , , chId, index] = data.split('_');
-            const channel = await Channel.findById(chId);
-            const src = channel.jsonSources[parseInt(index)];
-
-            const text = `🌐 <b>Деталі JSON джерела:</b>\n\n` +
-                `<b>URL:</b> <code>${src.url}</code>\n` +
-                `<b>Назва:</b> ${src.name || '—'}`;
-
-            return bot.editMessageText(text, {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                reply_markup: getSourceConfirmKeyboard(chId, 'json', index) // Твоя функція з keyboards/admin.js
             });
         }
 

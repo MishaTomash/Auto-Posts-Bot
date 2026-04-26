@@ -148,54 +148,49 @@ const renderSourcesList = async (bot, chatId, messageId, chId) => {
     const ch = await Channel.findById(chId);
     if (!ch) return;
 
-    let text = `📋 <b>Джерела для:</b> ${ch.channelUsername}\n\n`;
+    let text = `📋 <b>Telegram-джерела для:</b> ${ch.channelUsername || 'каналу'}\n\n`;
     const keyboard = [];
 
-    if (ch.rssUrls?.length > 0) {
-        text += `🌐 <b>RSS стрічки:</b>\n`;
-        ch.rssUrls.forEach((url, index) => {
-            text += `${index + 1}. <code>${url}</code>\n`;
-            keyboard.push([{ text: `🗑 Видалити RSS #${index + 1}`, callback_data: `remove_rss_${chId}_${index}` }]);
-        });
-        text += `\n`;
-    }
-
-    if (ch.tgSources?.length > 0) {
-        text += `📱 <b>Telegram канали:</b>\n`;
+    // Відображаємо лише Telegram канали
+    if (ch.tgSources && ch.tgSources.length > 0) {
+        text += `📱 <b>Список підключених каналів:</b>\n`;
         ch.tgSources.forEach((src, index) => {
+            // Використовуємо <code> для зручного копіювання посилання
             text += `${index + 1}. <code>${src.url}</code>\n`;
-            keyboard.push([{ text: `🗑 Видалити TG #${index + 1}`, callback_data: `remove_tgsrc_${chId}_${index}` }]);
+            
+            // Кнопка видалення для кожного джерела
+            keyboard.push([{ 
+                text: `🗑 Видалити джерело №${index + 1}`, 
+                callback_data: `remove_tgsrc_${chId}_${index}` 
+            }]);
         });
-        text += `\n`;
+    } else {
+        text += `<i>Джерел поки не додано. Бот не має звідки брати контент.</i>`;
     }
 
-    if (ch.jsonSources?.length > 0) {
-        text += `🔗 <b>JSON джерела:</b>\n`;
-        ch.jsonSources.forEach((src, index) => {
-            text += `${index + 1}. <b>${src.label}</b>\n<code>${src.url}</code>\n`;
-            keyboard.push([{ text: `🗑 Видалити JSON #${index + 1}`, callback_data: `remove_json_${chId}_${index}` }]);
-        });
-    }
-
-    if (!ch.rssUrls?.length && !ch.jsonSources?.length && (!ch.tgSources || !ch.tgSources.length)) {
-        text += `<i>Джерел поки не додано.</i>`;
-    }
-
+    // Кнопки управління
     keyboard.push([
-        { text: '➕ RSS', callback_data: `add_rss_${chId}` },
-        { text: '➕ TG Канал', callback_data: `add_tgsrc_${chId}` },
-        { text: '➕ JSON', callback_data: `add_json_${chId}` }
+        { text: '➕ Додати TG Канал', callback_data: `add_tgsrc_${chId}` },
     ]);
 
-    keyboard.push([{ text: '⬅️ Назад до налаштувань', callback_data: `manage_${chId}` }]);
+    keyboard.push([{ 
+        text: '⬅️ Назад до налаштувань', 
+        callback_data: `manage_${chId}` 
+    }]);
 
-    return bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        reply_markup: { inline_keyboard: keyboard }
-    });
+    try {
+        await bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    } catch (err) {
+        if (!err.message.includes('message is not modified')) {
+            console.error("Помилка рендеру списку джерел:", err);
+        }
+    }
 };
 
 const renderProfile = async (bot, chatId, messageId, user) => {
@@ -243,10 +238,7 @@ const renderProfile = async (bot, chatId, messageId, user) => {
     }
 };
 const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
-    const rssCount = channel.rssUrls?.length || 0;
     const tgCount = channel.tgSources?.length || 0;
-    const jsonCount = channel.jsonSources?.length || 0;
-    const totalSources = rssCount + tgCount + jsonCount;
 
     // 1. СТАТУС РОБОТИ (Активний/Пауза)
     const statusIcon = channel.isActive ? "🟢" : "🔴";
@@ -270,7 +262,7 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
     const text = `⚙️ <b>Налаштування:</b> ${channelTitle}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `🌐 <b>Канал:</b> <code>${channel.channelUsername || 'Не підключено'}</code>\n` +
-        `📊 <b>Джерела (${totalSources}):</b> RSS: ${rssCount}, TG: ${tgCount}, JSON: ${jsonCount}\n` +
+        `📊 <b>Джерела:</b> TG: ${tgCount}\n` +
         `⏱ <b>Інтервал:</b> кожні ${channel.checkInterval} хв.\n` +
         `🤖 <b>AI Промпт:</b> ${aiStatus}\n` +
         `📢 <b>Статус проєкту:</b> ${statusIcon} <b>${statusText}</b>\n` +

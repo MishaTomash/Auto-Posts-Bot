@@ -3,21 +3,13 @@ const mongoose = require('mongoose');
 const channelSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     channelId: { type: String },
-    channelUsername: { type: String },
-    rssUrls: { type: [String], default: [] },
-    
+    channelUsername: { type: String },    
     // ДОДАЙТЕ ЦЕ ПОЛЕ:
     tgSources: [{
         url: { type: String, required: true },
         lastMessageId: { type: Number, default: 0 }
     }],
-
-    jsonSources: [{
-        url: { type: String, required: true },
-        label: { type: String, default: 'JSON Data' },
-        lastDataHash: { type: String }
-    }],
-    isActive: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: false },
     isEnabled: { type: Boolean, default: false },
     checkInterval: { type: Number, default: 15 },
     lastCheckAt: { type: Date, default: new Date(0) },

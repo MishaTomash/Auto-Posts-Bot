@@ -17,20 +17,6 @@ const channelHandler = async (bot, query, user, callbacks) => {
     const messageId = query.message.message_id;
 
     try {
-        if (data.startsWith('add_rss_')) {
-            const id = data.slice(8);
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, {
-                tempState: 'WAITING_FOR_RSS',
-                'tempData.editingChannelId': id,
-                lastMenuMessageId: messageId
-            });
-            return bot.editMessageText("🌐 <b>Введіть нове RSS-посилання:</b>", {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                ...cancelMenu(`sources_list_${id}`)
-            });
-        }
 
         if (data.startsWith('add_tgsrc_')) {
             const channelId = data.split('_')[2];
@@ -55,33 +41,6 @@ const channelHandler = async (bot, query, user, callbacks) => {
                 parse_mode: 'HTML',
                 ...cancelMenu(`sources_list_${channelId}`)
             });
-        }
-
-        if (data.startsWith('add_json_')) {
-            const channelId = data.replace('add_json_', '');
-            await User.findOneAndUpdate(
-                { telegramId: chatId.toString() },
-                {
-                    tempState: 'WAITING_FOR_JSON',
-                    tempData: { editingChannelId: channelId, menuMessageId: messageId }
-                }
-            );
-            return bot.editMessageText("🌐 <b>Введіть посилання на JSON-джерело:</b>", {
-                chat_id: chatId,
-                message_id: messageId,
-                parse_mode: 'HTML',
-                ...cancelMenu(`sources_list_${channelId}`)
-            });
-        }
-
-        // Кнопка "Назад" у процесі додавання JSON
-        if (data.startsWith('add_json_back_')) {
-            const channelId = data.replace('add_json_back_', '');
-            await User.findOneAndUpdate(
-                { telegramId: chatId.toString() },
-                { tempState: null, tempData: {} }
-            );
-            return renderSourcesList(bot, chatId, messageId, channelId);
         }
 
         // --- СПИСОК КАНАЛІВ ---
@@ -125,21 +84,25 @@ const channelHandler = async (bot, query, user, callbacks) => {
             return renderSourcesList(bot, chatId, messageId, data.slice(13));
         }
 
-        if (data.startsWith('remove_rss_') || data.startsWith('remove_json_') || data.startsWith('remove_tgsrc_')) {
+        if (data.startsWith('remove_tgsrc_')) {
             const parts = data.split('_');
-            const type = parts[1]; // rss, json, tgsrc
+            // parts[0] = "remove", parts[1] = "tgsrc", parts[2] = chId, parts[3] = index
             const chId = parts[2];
             const index = parseInt(parts[3]);
 
             const ch = await Channel.findById(chId);
-            if (ch) {
-                if (type === 'rss') ch.rssUrls.splice(index, 1);
-                else if (type === 'json') ch.jsonSources.splice(index, 1);
-                else if (type === 'tgsrc') ch.tgSources.splice(index, 1);
+
+            if (ch && ch.tgSources && ch.tgSources[index] !== undefined) {
+                // Видаляємо елемент за індексом
+                ch.tgSources.splice(index, 1);
 
                 await ch.save();
-                await bot.answerCallbackQuery(query.id, { text: "Видалено" });
+                await bot.answerCallbackQuery(query.id, { text: "Джерело видалено" });
+
+                // Оновлюємо список у чаті
                 return renderSourcesList(bot, chatId, messageId, chId);
+            } else {
+                await bot.answerCallbackQuery(query.id, { text: "Помилка: джерело не знайдено", show_alert: true });
             }
         }
 
@@ -164,21 +127,19 @@ const channelHandler = async (bot, query, user, callbacks) => {
         // --- ПЕРЕВІРКА ТА СТАТУС ---
         if (data.startsWith('check_one_')) {
             const chId = data.slice(10);
-            const ch = await Channel.findById(chId);
+            // ДОДАЄМО .populate('userId')
+            const ch = await Channel.findById(chId).populate('userId');
+
             if (!ch) return;
 
             await bot.answerCallbackQuery(query.id, { text: "⏳ Перевірка запущена..." });
 
-            // 1. Запускаємо перевірку
+            // Тепер ch.userId — це повноцінний об'єкт юзера
             await processSingleChannel(bot, ch);
 
-            // 2. Отримуємо ОНОВЛЕНІ дані з бази (де вже є новий lastCheckAt)
             const updatedCh = await Channel.findById(chId);
-
-            // 3. Оновлюємо існуюче вікно налаштувань
             await renderChannelSettings(bot, chatId, messageId, updatedCh, user);
 
-            // 4. Надсилаємо повідомлення про успіх (опціонально, можна і без нього)
             return bot.sendMessage(chatId, `✅ Перевірка <b>${updatedCh.channelUsername}</b> завершена!`, { parse_mode: 'HTML' });
         }
 

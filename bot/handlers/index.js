@@ -1,7 +1,5 @@
 const User = require('../../models/User');
 const Channel = require('../../models/Channel');
-const { validateRSS } = require('../../services/rssService');
-const { validateJSON } = require('../../services/jsonService')
 const { cancelMenu } = require('../keyboards/main');
 const Plan = require('../../models/Plan');
 const { getUsersList } = require('../../services/adminService');
@@ -124,13 +122,11 @@ module.exports = async (bot, msg, callbacks) => {
                     userId: freshUser._id,
                     channelUsername: projectName, // Пишемо назву проєкту сюди
                     channelId: channelIdInput,
-                    isActive: true,
+                    isActive: false,
                     // aiPrompt за замовчуванням візьметься зі схеми, якщо тут не вказувати, 
                     // але про всяк випадок дублюємо дефолт:
                     aiPrompt: null,
-                    rssUrls: [],
                     tgSources: [],
-                    jsonSources: []
                 };
 
                 const saved = await new Channel(channelData).save();
@@ -164,117 +160,6 @@ module.exports = async (bot, msg, callbacks) => {
                 console.error("Create Error:", err);
                 return bot.sendMessage(chatId, "❌ Помилка: можливо цей канал вже додано.");
             }
-        }
-        // --- ЛОГІКА РЕДАГУВАННЯ КАНАЛІВ ---
-        if (state === 'WAITING_FOR_RSS') {
-            if (!editingId) return;
-
-            // 1. Знаходимо юзера, щоб дістати ID повідомлення з меню (яке треба оновити)
-            const user = await User.findOne({ telegramId: chatId.toString() });
-            const menuId = user?.tempData?.menuMessageId;
-
-            // 2. Зберігаємо посилання
-            await Channel.findByIdAndUpdate(editingId, { $addToSet: { rssUrls: text } });
-
-            // 3. Скидаємо стан
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null });
-
-            // 4. Видаляємо повідомлення юзера з лінком (щоб не смітити в чаті)
-            bot.deleteMessage(chatId, msg.message_id).catch(() => { });
-
-            // 5. Викликаємо перемальовку меню (використовуємо menuId замість msg.message_id)
-            if (callbacks && typeof callbacks.showChannelSettings === 'function') {
-                return callbacks.showChannelSettings(chatId, editingId, menuId, user);
-            } else {
-                console.error("❌ Помилка: callbacks.showChannelSettings не передано в обробник");
-            }
-        }
-        if (state === 'WAITING_FOR_JSON') {
-            if (!editingId) return;
-
-            const url = text.trim();
-            const statusMsg = await bot.sendMessage(chatId, "⏳ Перевіряю джерело...");
-            const isValid = await validateJSON(url);
-
-            bot.deleteMessage(chatId, statusMsg.message_id).catch(() => { });
-            bot.deleteMessage(chatId, msg.message_id).catch(() => { });
-
-            if (!isValid) {
-                await User.findOneAndUpdate(
-                    { telegramId: chatId.toString() },
-                    { tempState: 'WAITING_FOR_JSON_RETRY' }
-                );
-
-                const errorMsg = await bot.sendMessage(chatId,
-                    "❌ <b>Помилка!</b>\n\nЦе посилання не веде до валідного JSON...",
-                    {
-                        parse_mode: 'HTML',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                { text: '🔄 Спробувати ще раз', callback_data: `retry_json_${editingId}` },
-                                { text: '⬅️ Назад до джерел', callback_data: `sources_list_${editingId}` }
-                            ]]
-                        }
-                    }
-                );
-
-                // ✅ Зберігаємо ID помилки щоб потім видалити
-                await User.findOneAndUpdate(
-                    { telegramId: chatId.toString() },
-                    { 'tempData.errorMsgId': errorMsg.message_id }
-                );
-
-                return;
-            }
-
-            // Перевірка на дублікат
-            const existingChannel = await Channel.findById(editingId);
-            const alreadyExists = existingChannel.jsonSources.some(s => s.url === url);
-
-            if (alreadyExists) {
-                await User.findOneAndUpdate(
-                    { telegramId: chatId.toString() },
-                    { tempState: 'WAITING_FOR_JSON_RETRY' }
-                );
-
-                // ✅ Кнопки для дубліката
-                return bot.sendMessage(chatId,
-                    "⚠️ <b>Це джерело вже додано!</b>\n\nОберіть дію:",
-                    {
-                        parse_mode: 'HTML',
-                        reply_markup: {
-                            inline_keyboard: [[
-                                { text: '➕ Додати інше', callback_data: `retry_json_${editingId}` },
-                                { text: '⬅️ Назад до джерел', callback_data: `sources_list_${editingId}` }
-                            ]]
-                        }
-                    }
-                );
-            }
-
-            // Зберігаємо
-            await Channel.findByIdAndUpdate(editingId, {
-                $push: { jsonSources: { url: url, label: 'JSON Data' } }
-            });
-
-            await User.findOneAndUpdate(
-                { telegramId: chatId.toString() },
-                { tempState: null, tempData: {} }
-            );
-
-            // ✅ Кнопки після успішного додавання
-            return bot.sendMessage(chatId,
-                "✅ <b>JSON-джерело успішно додано!</b>\n\nОберіть дію:",
-                {
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: '➕ Додати ще JSON', callback_data: `retry_json_${editingId}` },
-                            { text: '📋 До списку джерел', callback_data: `sources_list_${editingId}` }
-                        ]]
-                    }
-                }
-            );
         }
         // Якщо стан заблоковано — ігноруємо будь-який текст
         if (state === 'WAITING_FOR_JSON_RETRY') {
@@ -354,28 +239,28 @@ module.exports = async (bot, msg, callbacks) => {
                 }
             });
         }
-if (user.tempState === 'WAITING_TG_SOURCE') {
-    const targetChannelId = user.tempData.targetChannelId;
-    // Переконайтеся, що ви використовуєте правильний об'єкт повідомлення (msg або message)
-    const sourceUrl = (msg.text || "").trim(); 
+        if (user.tempState === 'WAITING_TG_SOURCE') {
+            const targetChannelId = user.tempData.targetChannelId;
+            // Переконайтеся, що ви використовуєте правильний об'єкт повідомлення (msg або message)
+            const sourceUrl = (msg.text || "").trim();
 
-    if (!sourceUrl.includes('t.me/') && !sourceUrl.startsWith('@')) {
-        return bot.sendMessage(chatId, "❌ Це не схоже на посилання Telegram. Спробуйте ще раз або скасуйте дію.");
-    }
+            if (!sourceUrl.includes('t.me/') && !sourceUrl.startsWith('@')) {
+                return bot.sendMessage(chatId, "❌ Це не схоже на посилання Telegram. Спробуйте ще раз або скасуйте дію.");
+            }
 
-    // Додаємо в базу
-    const channel = await Channel.findByIdAndUpdate(targetChannelId, {
-        $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
-    }, { new: true });
+            // Додаємо в базу
+            const channel = await Channel.findByIdAndUpdate(targetChannelId, {
+                $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
+            }, { new: true });
 
-    // Скидаємо стан
-    await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
+            // Скидаємо стан
+            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
 
-    await bot.sendMessage(chatId, "✅ Джерело додано! Бот почне стежити за новими постами в цьому каналі.");
+            await bot.sendMessage(chatId, "✅ Джерело додано! Бот почне стежити за новими постами в цьому каналі.");
 
-    // ПІДКАЗКА: Викличте функцію рендеру списку джерел, щоб юзер відразу побачив оновлення
-    return renderSourcesList(bot, chatId, user.lastMenuMessageId, targetChannelId);
-}
+            // ПІДКАЗКА: Викличте функцію рендеру списку джерел, щоб юзер відразу побачив оновлення
+            return renderSourcesList(bot, chatId, user.lastMenuMessageId, targetChannelId);
+        }
 
         if (state === 'WAITING_FOR_ADMIN_USER_SEARCH') {
             const searchTerm = text.trim().replace('@', '');
@@ -424,27 +309,46 @@ if (user.tempState === 'WAITING_TG_SOURCE') {
         // 1. Обробка Telegram джерела
         if (state === 'WAITING_FOR_TG_SOURCE') {
             if (!editingId) return;
+
             let sourceUrl = text.trim();
+
+            // 1. Перевірка формату
             if (!sourceUrl.startsWith('@') && !sourceUrl.includes('t.me/')) {
                 return bot.sendMessage(chatId, "❌ Невірний формат. Надішліть @username або посилання t.me/...");
             }
 
-            await Channel.findByIdAndUpdate(editingId, {
-                $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
-            });
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
-            await bot.sendMessage(chatId, "✅ Telegram-джерело додано!");
-            return renderSourcesList(bot, chatId, null, editingId); // Перемальовуємо список
+            try {
+                const channel = await Channel.findById(editingId);
+                if (!channel) return;
+
+                // 2. Перевірка, чи вже є таке джерело в списку (щоб не було дублів)
+                const isDuplicate = channel.tgSources.some(src => src.url === sourceUrl);
+                if (isDuplicate) {
+                    return bot.sendMessage(chatId, "⚠️ Це джерело вже додане до списку.");
+                }
+
+                // 3. Додавання нового джерела
+                await Channel.findByIdAndUpdate(editingId, {
+                    $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
+                });
+
+                // Скидаємо стан юзера
+                await User.findOneAndUpdate(
+                    { telegramId: chatId.toString() },
+                    { tempState: null, tempData: {} }
+                );
+
+                await bot.sendMessage(chatId, "✅ Telegram-джерело додано!");
+
+                // Повертаємо користувача до списку джерел
+                return renderSourcesList(bot, chatId, null, editingId);
+
+            } catch (error) {
+                console.error("Помилка додавання TG джерела:", error);
+                await bot.sendMessage(chatId, "❌ Помилка бази даних. Спробуйте пізніше.");
+            }
         }
 
-        // 2. Обробка RSS
-        if (state === 'WAITING_FOR_RSS_URL') {
-            if (!editingId) return;
-            await Channel.findByIdAndUpdate(editingId, { $addToSet: { rssUrls: text.trim() } });
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
-            await bot.sendMessage(chatId, "✅ RSS-стрічку додано!");
-            return renderSourcesList(bot, chatId, null, editingId);
-        }
         if (user.state === 'WAITING_FOR_CHANNEL_ID') {
             let channelIdInput = text.trim();
 

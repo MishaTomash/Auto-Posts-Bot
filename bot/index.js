@@ -43,57 +43,65 @@ const setupBotCommands = (bot) => {
     };
 
     // Функція відображення налаштувань конкретного каналу
-async function showChannelSettings(chatId, channelId, messageId = null, user = null) {
-    try {
-        // Дістаємо чистий ID
-        const cleanId = (typeof channelId === 'string' && channelId.includes('_')) 
-            ? channelId.split('_').pop() 
-            : channelId;
+    async function showChannelSettings(chatId, channelId, messageId = null, user = null) {
+        try {
+            // Дістаємо чистий ID
+            const cleanId = (typeof channelId === 'string' && channelId.includes('_'))
+                ? channelId.split('_').pop()
+                : channelId;
 
-        if (!cleanId || cleanId.length !== 24) return;
+            if (!cleanId || cleanId.length !== 24) return;
 
-        // ШУКАЄМО ТІЛЬКИ В 'channel'
-        const channel = await Channel.findById(cleanId);
-        
-        if (!channel) {
-            console.log("❌ Канал не знайдено в БД по ID:", cleanId);
-            return;
-        }
+            // Шукаємо канал в базі
+            const channel = await Channel.findById(cleanId);
 
-        // Перевіряємо юзера
-        if (!user) {
-            user = await User.findOne({ telegramId: chatId.toString() });
-        }
-
-        // === DEBUG БЛОК (якщо тут впаде - значить channel реально null) ===
-        console.log(`DEBUG: Канал=${channel.channelUsername}, Enabled=${channel.isEnabled}`);
-
-        const projectStatus = channel.isActive ? "🟢 АКТИВНИЙ" : "🔴 НА ПАУЗІ";
-
-        const text = `⚙️ Керування: <b>${channel.channelUsername}</b>\n\n` +
-            `📊 Стан проєкту: <b>${projectStatus}</b>\n` +
-            `⏱ Інтервал: ${channel.checkInterval} хв\n` +
-            `📱 Джерела: TG(${channel.tgSources?.length || 0})  | RSS(${channel.rssUrls.length} | JSON(${channel.jsonSources.length})`;
-
-        const opts = {
-            parse_mode: 'HTML',
-            reply_markup: {
-                // ПЕРЕВІР ТУТ: має бути (channel, user), а не (ch, user)
-                inline_keyboard: getChannelSettingsKeyboard(channel, user)
+            if (!channel) {
+                console.log("❌ Канал не знайдено в БД по ID:", cleanId);
+                return;
             }
-        };
 
-        if (messageId) {
-            await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...opts }).catch(() => {});
-        } else {
-            await bot.sendMessage(chatId, text, opts);
+            // Отримуємо користувача, якщо він не переданий
+            if (!user) {
+                user = await User.findOne({ telegramId: chatId.toString() });
+            }
+
+            // Статус проекту
+            const projectStatus = channel.isActive ? "🟢 АКТИВНИЙ" : "🔴 НА ПАУЗІ";
+
+            // Підраховуємо кількість TG джерел
+            const tgCount = channel.tgSources?.length || 0;
+
+            const text = `⚙️ Керування: <b>${channel.channelUsername || 'Без назви'}</b>\n\n` +
+                `📊 Стан проєкту: <b>${projectStatus}</b>\n` +
+                `⏱ Інтервал: ${channel.checkInterval || 60} хв\n` +
+                `📱 Джерела: TG канали (${tgCount})`;
+
+            const opts = {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    // Використовуємо вашу функцію клавіатури
+                    inline_keyboard: getChannelSettingsKeyboard(channel, user)
+                }
+            };
+
+            if (messageId) {
+                await bot.editMessageText(text, {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    ...opts
+                }).catch(err => {
+                    if (!err.message.includes('message is not modified')) {
+                        console.error("Помилка редагування налаштувань:", err.message);
+                    }
+                });
+            } else {
+                await bot.sendMessage(chatId, text, opts);
+            }
+
+        } catch (e) {
+            console.error("🔴 showChannelSettings Error:", e.message);
         }
-    } catch (e) {
-        // Якщо тут пише "channel is not defined", значить ти десь у коді нижче 
-        // написав слово channel, якого немає в цій області видимості
-        console.error("🔴 showChannelSettings Error:", e.message);
     }
-}
     callbacks.showChannelSettings = showChannelSettings;
     // Команда /start
     bot.onText(/\/start/, async (msg) => {

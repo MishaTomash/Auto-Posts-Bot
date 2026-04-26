@@ -401,6 +401,28 @@ module.exports = async (bot, msg, callbacks) => {
                 return bot.sendMessage(chatId, "❌ Не вдалося створити проєкт. Можливо, цей ID вже використовується.");
             }
         }
+        // Вставити всередину обробника текстових повідомлень
+        if (user.tempState === 'WAITING_MANUAL_INTERVAL') {
+            const minutes = parseInt(text);
+            if (isNaN(minutes) || minutes < 1) {
+                return bot.sendMessage(chatId, "❌ Будь ласка, введіть число (мінімум 1 хвилина).");
+            }
+
+            const chId = user.tempData.targetChannelId;
+            await Channel.findByIdAndUpdate(chId, {
+                checkInterval: minutes,
+                scheduleMode: 'interval'
+            });
+
+            user.tempState = null;
+            user.tempData = null;
+            await user.save();
+
+            return bot.sendMessage(chatId, `✅ Інтервал оновлено: <b>кожні ${minutes} хв.</b>`, {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [[{ text: '⚙️ До налаштувань', callback_data: `manage_${chId}` }]] }
+            });
+        }
     } catch (e) {
         console.error("Handler Error:", e.message);
     }

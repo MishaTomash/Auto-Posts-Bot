@@ -10,6 +10,10 @@ const channelSchema = new mongoose.Schema({
         lastMessageId: { type: Number, default: 0 }
     }],
     isActive: { type: Boolean, default: false },
+    
+    scheduleMode: { type: String, enum: ['interval', 'daily'], default: 'interval' },
+    dailySchedule: { type: [Number], default: [] }, // Масив годин: [9, 13, 18]
+
     isEnabled: { type: Boolean, default: false },
     checkInterval: { type: Number, default: 15 },
     lastCheckAt: { type: Date, default: new Date(0) },

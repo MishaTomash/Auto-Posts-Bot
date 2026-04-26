@@ -4,9 +4,13 @@ const User = require('../../models/User');
 const Channel = require('../../models/Channel');
 const { processNews, processSingleChannel } = require('../../services/postService');
 
-// Клавіатури
+// Клавіатури (ОДИН РАЗ)
 const { cancelMenu } = require('../keyboards/main');
-const { getChannelSettingsKeyboard, getIntervalKeyboard } = require('../keyboards/channel');
+const {
+    getChannelSettingsKeyboard,
+    getIntervalKeyboard,
+    getScheduleKeyboard
+} = require('../keyboards/channel');
 
 // Рендерери
 const { renderSourcesList, renderPromptSettings, renderChannelSettings } = require('./ui_renderers');
@@ -107,10 +111,19 @@ const channelHandler = async (bot, query, user, callbacks) => {
         }
 
         // --- ІНТЕРВАЛИ ПЕРЕВІРКИ ---
+        // bot/callbacks/channels.js
+
         if (data.startsWith('edit_interval_')) {
-            return bot.editMessageText("⏱ <b>Змінити інтервал</b>", {
-                chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: getIntervalKeyboard(data.slice(14)) }
+            const chId = data.replace('edit_interval_', '');
+            const ch = await Channel.findById(chId); // Знаходимо канал, щоб передати об'єкт
+
+            if (!ch) return bot.answerCallbackQuery(query.id, { text: "❌ Проєкт не знайдено" });
+
+            return bot.editMessageText("⏱ <b>Змінити інтервал</b>\nОберіть режим або введіть час:", {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: getIntervalKeyboard(ch) } // Передаємо об'єкт ch
             });
         }
 
@@ -268,9 +281,73 @@ const channelHandler = async (bot, query, user, callbacks) => {
             // Тут messageId — це те саме повідомлення, на якому натиснули кнопку
             return renderPromptSettings(bot, chatId, messageId, chId);
         }
+        // Відкрити розклад (годинник)
+        if (data.startsWith('open_schedule_')) {
+            const chId = data.split('_')[2];
+            const ch = await Channel.findById(chId);
+
+            if (!ch) return bot.answerCallbackQuery(query.id, { text: "❌ Канал не знайдено" });
+
+            return bot.editMessageText(
+                "📅 <b>Розклад публікацій</b>\nОберіть години, в які бот повинен робити перевірку. Бот заходитиме один раз протягом кожної обраної години.",
+                {
+                    chat_id: chatId,
+                    message_id: messageId,
+                    parse_mode: 'HTML',
+                    reply_markup: getScheduleKeyboard(ch) // Виклик функції
+                }
+            );
+        }
+
+        // Перемикання години в розкладі
+        if (data.startsWith('toggle_hour_')) {
+            const [, , chId, hourStr] = data.split('_');
+            const hour = parseInt(hourStr);
+            const ch = await Channel.findById(chId);
+
+            let schedule = ch.dailySchedule || [];
+            if (schedule.includes(hour)) {
+                schedule = schedule.filter(h => h !== hour);
+            } else {
+                schedule.push(hour);
+                schedule.sort((a, b) => a - b);
+            }
+
+            ch.dailySchedule = schedule;
+            ch.scheduleMode = 'daily';
+            await ch.save();
+
+            return bot.editMessageReplyMarkup(getScheduleKeyboard(ch), { chat_id: chatId, message_id: messageId });
+        }
+
+        // Перемикання назад на інтервальний режим
+        if (data.startsWith('set_mode_interval_')) {
+            const chId = data.split('_')[3];
+            await Channel.findByIdAndUpdate(chId, { scheduleMode: 'interval' });
+            await bot.answerCallbackQuery(query.id, { text: "🔄 Увімкнено режим інтервалів" });
+            const ch = await Channel.findById(chId);
+            return bot.editMessageText("⏱ <b>Налаштування інтервалу</b>\nОберіть, як часто перевіряти джерела:", {
+                chat_id: chatId, message_id: messageId, parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: getIntervalKeyboard(ch) }
+            });
+        }
+
+        // Ручне введення інтервалу
+        if (data.startsWith('manual_int_')) {
+            const chId = data.split('_')[2];
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                { tempState: 'WAITING_MANUAL_INTERVAL', tempData: { targetChannelId: chId } }
+            );
+            return bot.sendMessage(chatId, "⌨️ <b>Введіть інтервал у хвилинах</b> (наприклад, 45 або 120):", {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: [[{ text: '❌ Скасувати', callback_data: `edit_interval_${chId}` }]] }
+            });
+        }
     } catch (error) {
         console.error("❌ Channels Handler Error:", error);
     }
 };
 
+// ПРАВИЛЬНО:
 module.exports = channelHandler;

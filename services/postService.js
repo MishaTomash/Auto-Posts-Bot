@@ -64,26 +64,49 @@ const processNews = async (bot, specificUserId = null) => {
     try {
         isProcessing = true;
         const now = new Date();
+        const currentHour = now.getHours(); // Отримуємо поточну годину (0-23)
 
         const query = { isActive: true };
         if (specificUserId) query.userId = specificUserId;
 
         const allActiveChannels = await Channel.find(query).populate('userId');
 
-        const channels = allActiveChannels.filter(ch => {
-            // Якщо натиснуто "Перевірити зараз", ми ігноруємо таймер (specificUserId передається при кліку)
-            if (specificUserId) return true; 
-            if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
+const channels = allActiveChannels.filter(ch => {
+    if (specificUserId) return true; // Кнопка "Перевірити зараз" завжди працює
 
-            const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
-            return now >= nextCheck;
-        });
+    const now = new Date();
+    const currentHour = now.getHours();
 
-        if (channels.length === 0) return;
+    // 1. Режим розкладу (конкретні години)
+    if (ch.scheduleMode === 'daily') {
+        const isTime = ch.dailySchedule?.includes(currentHour);
+        if (!isTime) return false;
 
-        console.log(`🔍 Настав час перевірки для ${channels.length} каналів.`);
+        // Перевіряємо, щоб не було повторів у тій же годині
+        if (ch.lastCheckAt) {
+            const lastCheck = new Date(ch.lastCheckAt);
+            if (lastCheck.getHours() === currentHour && lastCheck.getDate() === now.getDate()) {
+                return false; 
+            }
+        }
+        return true;
+    }
+
+    // 2. Режим інтервалів
+    if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
+    const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
+    return now >= nextCheck;
+});
+
+        if (channels.length === 0) {
+            isProcessing = false;
+            return;
+        }
+
+        console.log(`🔍 [LOG] Настав час перевірки для ${channels.length} каналів.`);
 
         for (const channel of channels) {
+            // Оновлюємо час перевірки відразу
             await Channel.findByIdAndUpdate(channel._id, { lastCheckAt: now });
 
             const promptToUse = await processSingleChannel(bot, channel);
@@ -119,6 +142,7 @@ const processNews = async (bot, specificUserId = null) => {
                             try {
                                 const targetId = channel.channelId;
                                 if (post.isGroup) {
+                                    // ... (тут твоя логіка з альбомами, вона не змінюється)
                                     const tmpFiles = [];
                                     const mediaGroup = [];
 
@@ -150,6 +174,7 @@ const processNews = async (bot, specificUserId = null) => {
                                     tmpFiles.forEach(f => fs.unlink(f, () => { }));
 
                                 } else {
+                                    // ... (твоя логіка з одиночним постом)
                                     let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
                                     const safeText = aiText ? sanitizeForTelegram(aiText) : "";
 
@@ -169,8 +194,7 @@ const processNews = async (bot, specificUserId = null) => {
                                     await finishPost(channel, source, post.id, postLink, user);
                                 }
                             } catch (err) {
-                                console.error(`❌ Помилка публікації поста:`, err.message);
-                                // Важливо: якщо пост не пішов, ми все одно зміщуємо ID, щоб не було циклу
+                                console.error(`❌ Помилка публікації:`, err.message);
                                 const currentId = post.isGroup ? post.maxId : post.id;
                                 await Channel.updateOne(
                                     { _id: channel._id, "tgSources.url": source.url },
@@ -179,7 +203,7 @@ const processNews = async (bot, specificUserId = null) => {
                             }
                         }
                     } catch (sourceErr) {
-                        console.error(`❌ Помилка джерела ${source.url}:`, sourceErr.message);
+                        console.error(`❌ Помилка джерела:`, sourceErr.message);
                     }
                 }
             }
@@ -213,5 +237,7 @@ async function finishPost(channel, source, lastId, link, user) {
     await User.findByIdAndUpdate(user._id, { $inc: { 'dailyPostStats.count': 1 } });
     user.dailyPostStats.count++;
 }
+
+
 
 module.exports = { processNews, processSingleChannel };

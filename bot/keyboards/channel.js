@@ -24,7 +24,7 @@ const getChannelSettingsKeyboard = (ch, user) => {
             callback_data: canUseAI ? `edit_prompt_${ch._id}` : `locked_feature_ai`
         }],
 
-        [{ text: '🔗 Перейти в канал', url: `https://t.me/${ch.channelUsername?.replace('@', '')}` }],
+        [{ text: '🔗 Перейти в канал', url: `https://t.me/${ch.channelId?.replace('@', '')}` }],
 
         [{ text: '🗑 Видалити цей проєкт', callback_data: `del_${ch._id}` }],
 

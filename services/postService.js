@@ -59,112 +59,133 @@ const bufferToTempFile = async (buffer, mediaType) => {
 let isProcessing = false;
 
 const processNews = async (bot, specificUserId = null) => {
-    if (isProcessing) {
-        console.log('⏳ Попередня перевірка ще триває, пропускаємо...');
-        return;
-    }
+    if (isProcessing) return;
 
     try {
         isProcessing = true;
+        const now = new Date();
+
         const query = { isActive: true };
         if (specificUserId) query.userId = specificUserId;
 
-        const channels = await Channel.find(query).populate('userId');
-        console.log(`🔍 Перевірка ${channels.length} каналів...`);
+        const allActiveChannels = await Channel.find(query).populate('userId');
+
+        const channels = allActiveChannels.filter(ch => {
+            // Якщо натиснуто "Перевірити зараз", ми ігноруємо таймер (specificUserId передається при кліку)
+            if (specificUserId) return true; 
+            if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
+
+            const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
+            return now >= nextCheck;
+        });
+
+        if (channels.length === 0) return;
+
+        console.log(`🔍 Настав час перевірки для ${channels.length} каналів.`);
 
         for (const channel of channels) {
-            // Перевіряємо ліміти та отримуємо промпт через допоміжну функцію
+            await Channel.findByIdAndUpdate(channel._id, { lastCheckAt: now });
+
             const promptToUse = await processSingleChannel(bot, channel);
-            if (promptToUse === false) continue; // Пропускаємо канал, якщо ліміт вичерпано
+            if (promptToUse === false) continue;
 
             const user = channel.userId;
 
             if (channel.tgSources?.length > 0) {
                 for (let source of channel.tgSources) {
-                    // Використовуємо твій getLatestPosts (gramjs)
-                    const newPosts = await getLatestPosts(source.url, source.lastMessageId);
-                    if (!newPosts || newPosts.length === 0) continue;
+                    try {
+                        const newPosts = await getLatestPosts(source.url, source.lastMessageId);
 
-                    for (const post of newPosts) {
-                        if (user.dailyPostStats.count >= user.subscription.maxPostsPerDay) break;
-
-                        // Унікальний лінк для перевірки дублікатів (t.me/channel/id)
-                        const postLink = post.isGroup
-                            ? `${source.url}/${post.maxId}`
-                            : `${source.url}/${post.id}`;
-
-                        const postExists = await Post.findOne({ channelId: channel.channelId, originalLink: postLink });
-                        if (postExists) continue;
-
-                        try {
-                            const targetId = channel.channelId;
-
-                            if (post.isGroup) {
-                                // --- ОБРОБКА АЛЬБОМУ ---
-                                const tmpFiles = [];
-                                const mediaGroup = [];
-
-                                for (let i = 0; i < post.items.length; i++) {
-                                    const item = post.items[i];
-                                    if (!item.media) continue;
-
-                                    const tmpPath = await bufferToTempFile(item.media, item.mediaType);
-                                    tmpFiles.push(tmpPath);
-
-                                    const mediaItem = {
-                                        type: item.mediaType === 'photo' ? 'photo' : 'video',
-                                        media: fs.createReadStream(tmpPath),
-                                    };
-
-                                    if (i === 0 && item.text) {
-                                        const aiCaption = await rewriteNews("", item.text, promptToUse);
-                                        if (aiCaption) {
-                                            mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
-                                            mediaItem.parse_mode = 'HTML';
-                                        }
-                                    }
-                                    mediaGroup.push(mediaItem);
-                                }
-
-                                if (mediaGroup.length > 0) {
-                                    await bot.sendMediaGroup(targetId, mediaGroup);
-                                    await finishPost(channel, source, post.maxId, postLink, user);
-                                }
-
-                                // Очищення файлів
-                                tmpFiles.forEach(f => fs.unlink(f, () => { }));
-
-                            } else {
-                                // --- ОБРОБКА ОДИНОЧНОГО ПОСТА ---
-                                let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
-                                const safeText = aiText ? sanitizeForTelegram(aiText) : "";
-
-                                if (post.media) {
-                                    const tmpPath = await bufferToTempFile(post.media, post.mediaType);
-                                    const stream = fs.createReadStream(tmpPath);
-
-                                    const options = { caption: safeText.substring(0, 1024), parse_mode: 'HTML' };
-
-                                    if (post.mediaType === 'photo') await bot.sendPhoto(targetId, stream, options);
-                                    else if (post.mediaType === 'video') await bot.sendVideo(targetId, stream, options);
-                                    else await bot.sendDocument(targetId, stream, options);
-
-                                    fs.unlink(tmpPath, () => { });
-                                } else if (safeText) {
-                                    await bot.sendMessage(targetId, safeText, { parse_mode: 'HTML' });
-                                }
-
-                                await finishPost(channel, source, post.id, postLink, user);
-                            }
-                        } catch (err) {
-                            console.error(`❌ Помилка публікації поста:`, err.message);
+                        if (newPosts.length === 1 && newPosts[0].isInitial) {
+                            await Channel.updateOne(
+                                { _id: channel._id, "tgSources.url": source.url },
+                                { $set: { "tgSources.$.lastMessageId": newPosts[0].maxId } }
+                            );
+                            continue;
                         }
+
+                        if (!newPosts || newPosts.length === 0) continue;
+
+                        for (const post of newPosts) {
+                            if (user.dailyPostStats.count >= user.subscription.maxPostsPerDay) break;
+
+                            const postLink = post.isGroup
+                                ? `${source.url}/${post.maxId}`
+                                : `${source.url}/${post.id}`;
+
+                            const postExists = await Post.findOne({ channelId: channel.channelId, originalLink: postLink });
+                            if (postExists) continue;
+
+                            try {
+                                const targetId = channel.channelId;
+                                if (post.isGroup) {
+                                    const tmpFiles = [];
+                                    const mediaGroup = [];
+
+                                    for (let i = 0; i < post.items.length; i++) {
+                                        const item = post.items[i];
+                                        if (!item.media) continue;
+                                        const tmpPath = await bufferToTempFile(item.media, item.mediaType);
+                                        tmpFiles.push(tmpPath);
+
+                                        const mediaItem = {
+                                            type: item.mediaType === 'photo' ? 'photo' : 'video',
+                                            media: fs.createReadStream(tmpPath),
+                                        };
+
+                                        if (i === 0 && item.text) {
+                                            const aiCaption = await rewriteNews("", item.text, promptToUse);
+                                            if (aiCaption) {
+                                                mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
+                                                mediaItem.parse_mode = 'HTML';
+                                            }
+                                        }
+                                        mediaGroup.push(mediaItem);
+                                    }
+
+                                    if (mediaGroup.length > 0) {
+                                        await bot.sendMediaGroup(targetId, mediaGroup);
+                                        await finishPost(channel, source, post.maxId, postLink, user);
+                                    }
+                                    tmpFiles.forEach(f => fs.unlink(f, () => { }));
+
+                                } else {
+                                    let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
+                                    const safeText = aiText ? sanitizeForTelegram(aiText) : "";
+
+                                    if (post.media) {
+                                        const tmpPath = await bufferToTempFile(post.media, post.mediaType);
+                                        const stream = fs.createReadStream(tmpPath);
+                                        const options = { caption: safeText.substring(0, 1024), parse_mode: 'HTML' };
+
+                                        if (post.mediaType === 'photo') await bot.sendPhoto(targetId, stream, options);
+                                        else if (post.mediaType === 'video') await bot.sendVideo(targetId, stream, options);
+                                        else await bot.sendDocument(targetId, stream, options);
+
+                                        fs.unlink(tmpPath, () => { });
+                                    } else if (safeText) {
+                                        await bot.sendMessage(targetId, safeText, { parse_mode: 'HTML' });
+                                    }
+                                    await finishPost(channel, source, post.id, postLink, user);
+                                }
+                            } catch (err) {
+                                console.error(`❌ Помилка публікації поста:`, err.message);
+                                // Важливо: якщо пост не пішов, ми все одно зміщуємо ID, щоб не було циклу
+                                const currentId = post.isGroup ? post.maxId : post.id;
+                                await Channel.updateOne(
+                                    { _id: channel._id, "tgSources.url": source.url },
+                                    { $set: { "tgSources.$.lastMessageId": currentId } }
+                                );
+                            }
+                        }
+                    } catch (sourceErr) {
+                        console.error(`❌ Помилка джерела ${source.url}:`, sourceErr.message);
                     }
                 }
             }
         }
-    } catch (error) {
-        console.error("❌ Глобальна помилка processNews:", error.message);
+    } catch (globalErr) {
+        console.error("❌ Глобальна помилка processNews:", globalErr.message);
     } finally {
         isProcessing = false;
     }

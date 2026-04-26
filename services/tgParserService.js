@@ -44,8 +44,17 @@ async function getLatestPosts(channelUrl, lastId) {
         const entity = await client.getEntity(channelUrl);
         const messages = await client.getMessages(entity, { limit: 15 });
 
+        // ЯКЩО ЦЕ ПЕРШИЙ ЗАПУСК (lastId === 0)
+        if (!lastId || lastId === 0) {
+            const maxMsgId = messages.length > 0 ? Math.max(...messages.map(m => m.id)) : 0;
+            console.log(`🆕 [INIT] Перша перевірка ${channelUrl}. Фіксуємо ID: ${maxMsgId}`);
+            
+            // Повертаємо спеціальний об'єкт, щоб зафіксувати точку відліку
+            return [{ isInitial: true, maxId: maxMsgId }];
+        }
+
         const newMessages = messages
-            .filter(msg => msg.id > (lastId || 0) && !msg.action)
+            .filter(msg => msg.id > lastId && !msg.action)
             .sort((a, b) => a.id - b.id);
 
         const grouped = {};

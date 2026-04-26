@@ -261,7 +261,7 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
 
     const text = `⚙️ <b>Налаштування:</b> ${channelTitle}\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `🌐 <b>Канал:</b> <code>${channel.channelUsername || 'Не підключено'}</code>\n` +
+        `🌐 <b>Канал:</b> <code>${channel.channelId || 'Не підключено'}</code>\n` +
         `📊 <b>Джерела:</b> TG: ${tgCount}\n` +
         `⏱ <b>Інтервал:</b> кожні ${channel.checkInterval} хв.\n` +
         `🤖 <b>AI Промпт:</b> ${aiStatus}\n` +

@@ -30,10 +30,10 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // --- ПЛАНУВАЛЬНИК (CRON) ---
 
-// 1. Перевірка закінчення терміну підписок (щогодини)
+// 1. Перевірка підписок (щогодини)
 cron.schedule('0 * * * *', async () => {
-    console.log('🕒 Запуск планової перевірки термінів підписок...');
-    await checkSubscriptions(bot).catch(err => console.error('Subscription Cron Error:', err.message));
+    console.log('🕒 Запуск перевірки підписок...');
+    await checkSubscriptions(bot).catch(err => console.error('Sub Cron Error:', err.message));
 });
 
 // 2. Перевірка новин (щохвилини)
@@ -41,27 +41,19 @@ cron.schedule('* * * * *', async () => {
     await processNews(bot).catch(err => console.error('News Cron Error:', err.message));
 });
 
-// 3. Нічне скидання лімітів постів (о 00:05)
+// 3. Скидання лімітів (00:05)
 cron.schedule('5 0 * * *', async () => {
     const today = new Date().toISOString().split('T')[0];
-    console.log(`🕒 [CRON] Нічне скидання лімітів на дату: ${today}`);
-
     try {
         const result = await User.updateMany(
             { "dailyPostStats.date": { $ne: today } },
-            {
-                $set: {
-                    "dailyPostStats.count": 0,
-                    "dailyPostStats.date": today
-                }
-            }
+            { $set: { "dailyPostStats.count": 0, "dailyPostStats.date": today } }
         );
-        console.log(`✅ [CRON] Ліміти оновлено для ${result.modifiedCount} користувачів.`);
+        console.log(`✅ Ліміти скинуто для ${result.modifiedCount} користувачів.`);
     } catch (err) {
-        console.error('❌ [CRON] Помилка скидання:', err.message);
+        console.error('❌ Помилка скидання лімітів:', err.message);
     }
 });
-
 // --- ПЛАТЕЖІ (TELEGRAM STARS) ---
 
 // 1. ПІДТВЕРДЖЕННЯ (Pre-Checkout)

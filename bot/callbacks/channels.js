@@ -214,16 +214,24 @@ const channelHandler = async (bot, query, user, callbacks) => {
                     return bot.answerCallbackQuery(query.id, { text: "⛔ Це не ваш проєкт!" });
                 }
 
+                // Змінюємо статус
                 channel.isActive = !channel.isActive;
+
+                // Якщо ми ВМИКАЄМО канал, скидаємо ID останніх постів у 0.
+                // Це змусить парсер зробити "ініціалізацію" (запам'ятати поточний останній пост і чекати на наступний).
+                if (channel.isActive && channel.tgSources && channel.tgSources.length > 0) {
+                    channel.tgSources = channel.tgSources.map(src => ({
+                        ...src,
+                        lastMessageId: 0
+                    }));
+                }
+
                 await channel.save();
 
                 await bot.answerCallbackQuery(query.id, {
-                    text: channel.isActive ? "🚀 Працюю" : "⏸ Призупинено"
+                    text: channel.isActive ? "🚀 Працюю (чекаю на нові пости)" : "⏸ Призупинено"
                 });
 
-                // ВИПРАВЛЕННЯ ТУТ:
-                // Замість showChannelSettings викликаємо renderChannelSettings
-                // Це гарантує, що меню оновиться, але залишиться "гарним" (з роздільниками та статистикою)
                 return renderChannelSettings(bot, chatId, messageId, channel, user);
 
             } catch (e) {

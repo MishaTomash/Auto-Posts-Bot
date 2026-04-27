@@ -58,91 +58,98 @@ const bufferToTempFile = async (buffer, mediaType) => {
 
 let isProcessing = false;
 
+// services/postService.js
+
 const processNews = async (bot, specificUserId = null) => {
     if (isProcessing) return;
 
     try {
         isProcessing = true;
         const now = new Date();
-        const currentHour = now.getHours(); // Отримуємо поточну годину (0-23)
+        const currentHour = now.getHours();
 
+        // 1. Фільтрація активних каналів
         const query = { isActive: true };
         if (specificUserId) query.userId = specificUserId;
 
         const allActiveChannels = await Channel.find(query).populate('userId');
 
-const channels = allActiveChannels.filter(ch => {
-    if (specificUserId) return true; // Кнопка "Перевірити зараз" завжди працює
+        const channels = allActiveChannels.filter(ch => {
+            if (specificUserId) return true; // Кнопка "Перевірити зараз" ігнорує таймери
 
-    const now = new Date();
-    const currentHour = now.getHours();
+            // Логіка Розкладу (Конкретні години)
+            if (ch.scheduleMode === 'daily') {
+                const isTime = ch.dailySchedule?.includes(currentHour);
+                if (!isTime) return false;
 
-    // 1. Режим розкладу (конкретні години)
-    if (ch.scheduleMode === 'daily') {
-        const isTime = ch.dailySchedule?.includes(currentHour);
-        if (!isTime) return false;
-
-        // Перевіряємо, щоб не було повторів у тій же годині
-        if (ch.lastCheckAt) {
-            const lastCheck = new Date(ch.lastCheckAt);
-            if (lastCheck.getHours() === currentHour && lastCheck.getDate() === now.getDate()) {
-                return false; 
+                if (ch.lastCheckAt) {
+                    const lastCheck = new Date(ch.lastCheckAt);
+                    if (lastCheck.getHours() === currentHour && lastCheck.getDate() === now.getDate()) {
+                        return false; // Вже перевірено в цю годину
+                    }
+                }
+                return true;
             }
-        }
-        return true;
-    }
 
-    // 2. Режим інтервалів
-    if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
-    const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
-    return now >= nextCheck;
-});
+            // Логіка Інтервалів (напр. кожна 1 хв)
+            if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
+            const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
+            return now >= nextCheck;
+        });
 
-        if (channels.length === 0) {
-            isProcessing = false;
-            return;
-        }
+        if (channels.length === 0) return;
 
-        console.log(`🔍 [LOG] Настав час перевірки для ${channels.length} каналів.`);
+        console.log(`🔍 [LOG] Перевірка для ${channels.length} каналів.`);
 
         for (const channel of channels) {
-            // Оновлюємо час перевірки відразу
+            console.log(`🔹 Проєкт: ${channel.channelUsername}`);
+
+            // Оновлюємо час перевірки в базі
             await Channel.findByIdAndUpdate(channel._id, { lastCheckAt: now });
 
             const promptToUse = await processSingleChannel(bot, channel);
-            if (promptToUse === false) continue;
+            if (promptToUse === false) continue; // Ліміти вичерпано
 
             const user = channel.userId;
 
-            if (channel.tgSources?.length > 0) {
+            if (channel.tgSources && channel.tgSources.length > 0) {
                 for (let source of channel.tgSources) {
                     try {
+                        console.log(`📡 Джерело: ${source.url} (Last ID: ${source.lastMessageId})`);
                         const newPosts = await getLatestPosts(source.url, source.lastMessageId);
 
+                        // Ініціалізація (запобігання спаму старими постами)
                         if (newPosts.length === 1 && newPosts[0].isInitial) {
                             await Channel.updateOne(
                                 { _id: channel._id, "tgSources.url": source.url },
                                 { $set: { "tgSources.$.lastMessageId": newPosts[0].maxId } }
                             );
+                            console.log(`🆕 [INIT] Закладка встановлена на ID: ${newPosts[0].maxId}`);
                             continue;
                         }
 
                         if (!newPosts || newPosts.length === 0) continue;
 
+                        console.log(`📨 Знайдено нових постів: ${newPosts.length}`);
+
                         for (const post of newPosts) {
-                            if (user.dailyPostStats.count >= user.subscription.maxPostsPerDay) break;
+                            // Перевірка ліміту підписки перед кожним постом
+                            if (user.dailyPostStats.count >= (user.subscription?.maxPostsPerDay || 5)) {
+                                console.log(`🛑 Ліміт вичерпано для ${user.telegramId}`);
+                                break;
+                            }
 
-                            const postLink = post.isGroup
-                                ? `${source.url}/${post.maxId}`
-                                : `${source.url}/${post.id}`;
-
+                            const postLink = post.isGroup ? `${source.url}/${post.maxId}` : `${source.url}/${post.id}`;
                             const postExists = await Post.findOne({ channelId: channel.channelId, originalLink: postLink });
                             if (postExists) continue;
 
+                            // ВІДПРАВКА КОНТЕНТУ
                             try {
                                 const targetId = channel.channelId;
+                                let success = false;
+
                                 if (post.isGroup) {
-                                    // ... (тут твоя логіка з альбомами, вона не змінюється)
+                                    // Обробка альбому
                                     const tmpFiles = [];
                                     const mediaGroup = [];
 
@@ -159,22 +166,20 @@ const channels = allActiveChannels.filter(ch => {
 
                                         if (i === 0 && item.text) {
                                             const aiCaption = await rewriteNews("", item.text, promptToUse);
-                                            if (aiCaption) {
-                                                mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
-                                                mediaItem.parse_mode = 'HTML';
-                                            }
+                                            mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
+                                            mediaItem.parse_mode = 'HTML';
                                         }
                                         mediaGroup.push(mediaItem);
                                     }
 
                                     if (mediaGroup.length > 0) {
                                         await bot.sendMediaGroup(targetId, mediaGroup);
-                                        await finishPost(channel, source, post.maxId, postLink, user);
+                                        success = true;
                                     }
                                     tmpFiles.forEach(f => fs.unlink(f, () => { }));
 
                                 } else {
-                                    // ... (твоя логіка з одиночним постом)
+                                    // Одиночний пост
                                     let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
                                     const safeText = aiText ? sanitizeForTelegram(aiText) : "";
 
@@ -188,22 +193,29 @@ const channels = allActiveChannels.filter(ch => {
                                         else await bot.sendDocument(targetId, stream, options);
 
                                         fs.unlink(tmpPath, () => { });
+                                        success = true;
                                     } else if (safeText) {
                                         await bot.sendMessage(targetId, safeText, { parse_mode: 'HTML' });
+                                        success = true;
                                     }
-                                    await finishPost(channel, source, post.id, postLink, user);
                                 }
-                            } catch (err) {
-                                console.error(`❌ Помилка публікації:`, err.message);
-                                const currentId = post.isGroup ? post.maxId : post.id;
+
+                                if (success) {
+                                    await finishPost(channel, source, post.isGroup ? post.maxId : post.id, postLink, user);
+                                    console.log(`✅ Пост ${postLink} успішно опубліковано.`);
+                                }
+
+                            } catch (sendError) {
+                                console.error(`❌ Помилка відправки:`, sendError.message);
+                                // Пропускаємо ID, щоб не зациклюватися на помилці
                                 await Channel.updateOne(
                                     { _id: channel._id, "tgSources.url": source.url },
-                                    { $set: { "tgSources.$.lastMessageId": currentId } }
+                                    { $set: { "tgSources.$.lastMessageId": post.isGroup ? post.maxId : post.id } }
                                 );
                             }
                         }
                     } catch (sourceErr) {
-                        console.error(`❌ Помилка джерела:`, sourceErr.message);
+                        console.error(`❌ Помилка джерела ${source.url}:`, sourceErr.message);
                     }
                 }
             }
@@ -211,7 +223,7 @@ const channels = allActiveChannels.filter(ch => {
     } catch (globalErr) {
         console.error("❌ Глобальна помилка processNews:", globalErr.message);
     } finally {
-        isProcessing = false;
+        isProcessing = false; // Звільняємо блокування в будь-якому випадку
     }
 };
 

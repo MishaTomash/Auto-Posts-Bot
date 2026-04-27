@@ -37,7 +37,15 @@ const callbackHandler = async (bot, query, sendMainMenu, callbacks) => {
         }
 
         if (data === 'main_menu' || data === 'main_menu_exit') {
-            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { 'tempData.lastMenu': 'main_menu' });
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                {
+                    $set: {
+                        tempState: null, // Скидаємо стан очікування вводу
+                        tempData: { lastMenu: 'main_menu' } // Перезаписуємо об'єкт повністю
+                    }
+                }
+            );
             return sendMainMenu(chatId, messageId);
         }
 

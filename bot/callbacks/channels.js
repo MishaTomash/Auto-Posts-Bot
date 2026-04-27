@@ -21,16 +21,24 @@ const channelHandler = async (bot, query, user, callbacks) => {
     const messageId = query.message.message_id;
 
     try {
-
         if (data.startsWith('add_tgsrc_')) {
+            // Витягуємо ID каналу (проекту) з callback_data
             const channelId = data.split('_')[2];
+
+            // 1. Оновлюємо стан користувача в базі
             await User.findOneAndUpdate(
                 { telegramId: chatId.toString() },
                 {
                     tempState: 'WAITING_TG_SOURCE',
-                    tempData: { targetChannelId: channelId }
+                    tempData: {
+                        targetChannelId: channelId,
+                        // Зберігаємо ID поточного повідомлення, щоб потім його відредагувати
+                        instructionMessageId: messageId
+                    }
                 }
             );
+
+            // 2. Формуємо текст інструкції
             const originalText =
                 "📱 <b>Додавання Telegram-джерела</b>\n\n" +
                 "Надішліть посилання на канал, за яким треба стежити.\n\n" +
@@ -39,11 +47,17 @@ const channelHandler = async (bot, query, user, callbacks) => {
                 "• <code>@username</code>\n\n" +
                 "<i>Бот буде автоматично робити рерайт нових постів з цього каналу.</i>";
 
+            // 3. Редагуємо існуюче меню, перетворюючи його на інструкцію
             return bot.editMessageText(originalText, {
                 chat_id: chatId,
                 message_id: messageId,
                 parse_mode: 'HTML',
-                ...cancelMenu(`sources_list_${channelId}`)
+                // Додаємо кнопку скасування, щоб повернутися назад, якщо юзер передумав
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '❌ Скасувати', callback_data: `sources_list_${channelId}` }]
+                    ]
+                }
             });
         }
 
@@ -140,26 +154,36 @@ const channelHandler = async (bot, query, user, callbacks) => {
         // --- ПЕРЕВІРКА ТА СТАТУС ---
         if (data.startsWith('check_one_')) {
             const chId = data.slice(10);
-            // ДОДАЄМО .populate('userId')
             const ch = await Channel.findById(chId).populate('userId');
 
-            if (!ch) return;
+            if (!ch) return bot.answerCallbackQuery(query.id, { text: "❌ Канал не знайдено" });
 
+            // Повідомляємо, що процес пішов
             await bot.answerCallbackQuery(query.id, { text: "⏳ Перевірка запущена..." });
 
-            // Тепер ch.userId — це повноцінний об'єкт юзера
+            // Запускаємо логіку перевірки
             await processSingleChannel(bot, ch);
 
             const updatedCh = await Channel.findById(chId);
+
+            // Оновлюємо основне меню (щоб змінився час останньої перевірки)
             await renderChannelSettings(bot, chatId, messageId, updatedCh, user);
 
-            return bot.sendMessage(chatId, `✅ Перевірка <b>${updatedCh.channelUsername}</b> завершена!`, { parse_mode: 'HTML' });
+            // ЗАМІСТЬ sendMessage використовуємо повторний answerCallbackQuery (якщо це дозволяє затримка)
+            // Або просто нічого не шлемо, бо статус оновиться в самому меню.
+            // Але якщо хочеш саме "плашку" в кінці, найкраще зробити так:
+            return bot.answerCallbackQuery(query.id, {
+                text: `✅ Перевірка "${updatedCh.channelUsername}" завершена!`,
+                show_alert: false
+            }).catch(() => {
+                // Якщо минуло багато часу і answerCallbackQuery вже не діє, 
+                // бот просто проігнорує цей крок без помилки в консолі
+            });
         }
 
         if (data === 'force_check_all') {
             await bot.answerCallbackQuery(query.id, { text: "🚀 Запуск загальної перевірки" });
             await processNews(bot, user._id);
-            return bot.sendMessage(chatId, "✅ Всі канали перевірено!");
         }
 
         // --- AI ПРОМПТИ ---
@@ -348,13 +372,27 @@ const channelHandler = async (bot, query, user, callbacks) => {
         // Ручне введення інтервалу
         if (data.startsWith('manual_int_')) {
             const chId = data.split('_')[2];
+
             await User.findOneAndUpdate(
                 { telegramId: chatId.toString() },
-                { tempState: 'WAITING_MANUAL_INTERVAL', tempData: { targetChannelId: chId } }
+                {
+                    tempState: 'WAITING_MANUAL_INTERVAL',
+                    tempData: {
+                        targetChannelId: chId,
+                        // Додаємо цей рядок, щоб бот знав, яке повідомлення редагувати пізніше
+                        instructionMessageId: messageId
+                    }
+                }
             );
-            return bot.sendMessage(chatId, "⌨️ <b>Введіть інтервал у хвилинах</b> (наприклад, 45 або 120):", {
+
+            // Замість sendMessage використовуємо editMessageText
+            return bot.editMessageText("⌨️ <b>Введіть інтервал у хвилинах</b> (наприклад, 45 або 120):", {
+                chat_id: chatId,
+                message_id: messageId,
                 parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [[{ text: '❌ Скасувати', callback_data: `edit_interval_${chId}` }]] }
+                reply_markup: {
+                    inline_keyboard: [[{ text: '❌ Скасувати', callback_data: `edit_interval_${chId}` }]]
+                }
             });
         }
     } catch (error) {

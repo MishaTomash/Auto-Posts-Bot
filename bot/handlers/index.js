@@ -4,21 +4,25 @@ const { cancelMenu } = require('../keyboards/main');
 const Plan = require('../../models/Plan');
 const { getUsersList } = require('../../services/adminService');
 const { getUsersKeyboard } = require('../keyboards/admin');
-const { renderPromptSettings, renderSourcesList } = require('../callbacks/ui_renderers');
-
+const { renderPromptSettings, renderSourcesList, renderChannelSettings } = require('../callbacks/ui_renderers');
+const { getIntervalKeyboard } = require('../keyboards/channel');
 
 module.exports = async (bot, msg, callbacks) => {
     const chatId = msg.chat.id;
     const text = msg.text || "";
-    // const response =
-    //     `✅ **Назву "${text}" прийнято!**\n` +
-    //     `________________________________\n\n` +
-    //     `🔗 **Крок 2 з 2: Підключення каналу**\n\n` +
-    //     `Куди бот має публікувати готові новини?\n\n` +
-    //     `**Надішліть одним повідомленням:**\n` +
-    //     `• Посилання (напр. \`t.me/my_channel\`)\n` +
-    //     `• Або Username (напр. \`@my_channel\`)\n` +
-    //     `• Або числовий ID (напр. \`-100...\`)`;
+
+    if (msg.successful_payment) {
+        console.log('💰 Оплата отримана!');
+
+        // Видаляємо службове повідомлення про оплату
+        await bot.deleteMessage(chatId, msg.message_id).catch(() => { });
+
+        // Спробуємо видалити повідомлення з інвойсом (яке було перед цим)
+        await bot.deleteMessage(chatId, msg.message_id - 1).catch(() => { });
+
+        // Тут твій виклик функції активації тарифу
+        return; // Виходимо, щоб далі не йшла обробка як тексту
+    }
 
     // Отримуємо юзера та перевіряємо, чи є активний стан
     const user = await User.findOne({ telegramId: chatId.toString() });
@@ -241,25 +245,40 @@ module.exports = async (bot, msg, callbacks) => {
         }
         if (user.tempState === 'WAITING_TG_SOURCE') {
             const targetChannelId = user.tempData.targetChannelId;
-            // Переконайтеся, що ви використовуєте правильний об'єкт повідомлення (msg або message)
             const sourceUrl = (msg.text || "").trim();
 
+            // 1. Видаляємо повідомлення користувача (його посилання), щоб було чисто
+            await bot.deleteMessage(chatId, msg.message_id).catch(() => { });
+
             if (!sourceUrl.includes('t.me/') && !sourceUrl.startsWith('@')) {
-                return bot.sendMessage(chatId, "❌ Це не схоже на посилання Telegram. Спробуйте ще раз або скасуйте дію.");
+                const errorMsg = await bot.sendMessage(chatId, "❌ Це не посилання. Спробуйте ще раз.");
+                // Видаляємо помилку через 3 секунди, щоб не смітити
+                setTimeout(() => bot.deleteMessage(chatId, errorMsg.message_id).catch(() => { }), 3000);
+                return;
             }
 
             // Додаємо в базу
-            const channel = await Channel.findByIdAndUpdate(targetChannelId, {
+            await Channel.findByIdAndUpdate(targetChannelId, {
                 $push: { tgSources: { url: sourceUrl, lastMessageId: 0 } }
-            }, { new: true });
+            });
+
+            // 2. Видаляємо повідомлення бота з інструкцією (якщо ти зберіг його ID)
+            // Якщо ID інструкції не зберігав, цей крок можна пропустити
+            if (user.tempData.instructionMessageId) {
+                await bot.deleteMessage(chatId, user.tempData.instructionMessageId).catch(() => { });
+            }
 
             // Скидаємо стан
             await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
 
-            await bot.sendMessage(chatId, "✅ Джерело додано! Бот почне стежити за новими постами в цьому каналі.");
+            // 3. Оновлюємо меню до списку джерел
+            await renderSourcesList(bot, chatId, user.tempData.instructionMessageId, targetChannelId);
+            // 4. ТВОЯ НОВА ЧАСТИНА: Тимчасове повідомлення про успіх
+            const successMsg = await bot.sendMessage(chatId, "✅ Джерело додано успішно!");
 
-            // ПІДКАЗКА: Викличте функцію рендеру списку джерел, щоб юзер відразу побачив оновлення
-            return renderSourcesList(bot, chatId, user.lastMenuMessageId, targetChannelId);
+            setTimeout(() => {
+                bot.deleteMessage(chatId, successMsg.message_id).catch(() => { });
+            }, 3000); // Видалить цей текст через 3 секунди
         }
 
         if (state === 'WAITING_FOR_ADMIN_USER_SEARCH') {
@@ -404,24 +423,35 @@ module.exports = async (bot, msg, callbacks) => {
         // Вставити всередину обробника текстових повідомлень
         if (user.tempState === 'WAITING_MANUAL_INTERVAL') {
             const minutes = parseInt(text);
+            const chId = user.tempData.targetChannelId;
+            const instructionMessageId = user.tempData.instructionMessageId;
+
+            // Видаляємо цифру користувача (це працює, бо bot доступний)
+            await bot.deleteMessage(chatId, msg.message_id).catch(() => { });
+
             if (isNaN(minutes) || minutes < 1) {
-                return bot.sendMessage(chatId, "❌ Будь ласка, введіть число (мінімум 1 хвилина).");
+                const errorMsg = await bot.sendMessage(chatId, "❌ Введіть число більше 0");
+                setTimeout(() => bot.deleteMessage(chatId, errorMsg.message_id).catch(() => { }), 3000);
+                return;
             }
 
-            const chId = user.tempData.targetChannelId;
-            await Channel.findByIdAndUpdate(chId, {
+            const updatedCh = await Channel.findByIdAndUpdate(chId, {
                 checkInterval: minutes,
                 scheduleMode: 'interval'
-            });
+            }, { new: true });
 
-            user.tempState = null;
-            user.tempData = null;
-            await user.save();
+            await User.findOneAndUpdate({ telegramId: chatId.toString() }, { tempState: null, tempData: {} });
 
-            return bot.sendMessage(chatId, `✅ Інтервал оновлено: <b>кожні ${minutes} хв.</b>`, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: [[{ text: '⚙️ До налаштувань', callback_data: `manage_${chId}` }]] }
-            });
+            // ТЕПЕР ЦЕ ПРАЦЮВАТИМЕ (якщо імпортовано)
+            try {
+                await renderChannelSettings(bot, chatId, instructionMessageId, updatedCh, user);
+            } catch (err) {
+                console.error("Все ще помилка імпорту:", err.message);
+                await bot.sendMessage(chatId, "✅ Збережено! Поверніться в меню.");
+            }
+
+            const successMsg = await bot.sendMessage(chatId, `✅ Інтервал: ${minutes} хв.`);
+            setTimeout(() => bot.deleteMessage(chatId, successMsg.message_id).catch(() => { }), 3000);
         }
     } catch (e) {
         console.error("Handler Error:", e.message);

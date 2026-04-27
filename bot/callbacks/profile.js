@@ -16,9 +16,16 @@ const profileHandler = async (bot, query, user) => {
             return renderProfile(bot, chatId, messageId, user);
         }
 
-        // --- МАГАЗИН ПІДПИСОК ---
         if (data === 'subscription_shop') {
-            return renderSubscriptionShop(bot, chatId, messageId, 'main_menu');
+            // ВАЖЛИВО: спочатку видаляємо, потім малюємо нове
+            try {
+                await bot.deleteMessage(chatId, messageId);
+            } catch (e) {
+                console.log("Не вдалося видалити інвойс, можливо він вже видалений");
+            }
+
+            // Передаємо null замість messageId, щоб renderSubscriptionShop надіслав НОВЕ повідомлення
+            return renderSubscriptionShop(bot, chatId, null, 'main_menu');
         }
 
         if (data === 'upgrade_plan') {
@@ -31,19 +38,30 @@ const profileHandler = async (bot, query, user) => {
             const plan = await Plan.findOne({ name: planName });
 
             if (!plan || plan.price <= 0) {
-                return bot.answerCallbackQuery(query.id, { text: "⚠️ Цей тариф неможливо купити" });
+                return bot.answerCallbackQuery(query.id, { text: "⚠️ Помилка тарифу" });
             }
 
-            console.log(`💳 Створення інвойсу: ${plan.displayName} за ${plan.price} Stars`);
+            // 1. ВИДАЛЯЄМО старе повідомлення (будь то список тарифів чи старий інвойс)
+            await bot.deleteMessage(chatId, messageId).catch(() => { });
 
+            console.log(`💳 Створення інвойсу: ${plan.displayName}`);
+
+            // 2. Надсилаємо НОВИЙ інвойс
             return await bot.sendInvoice(
                 chatId,
                 `Тариф ${plan.displayName}`,
                 `Доступ до ${plan.maxChannels} к-лів та ${plan.maxPostsPerDay} постів/день`,
                 `plan_payment_${planName}_${chatId}`,
-                '',      // Provider token (empty for Stars)
-                'XTR',   // Currency
-                [{ label: `Купівля ${plan.displayName}`, amount: plan.price }]
+                '', 'XTR',
+                [{ label: `${plan.displayName}`, amount: plan.price }],
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: `Оплатити ⭐ ${plan.price}`, pay: true }],
+                            [{ text: '⬅️ Назад до тарифів', callback_data: 'subscription_shop' }]
+                        ]
+                    }
+                }
             );
         }
 

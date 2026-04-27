@@ -51,6 +51,20 @@ const adminHandler = async (bot, query, user, callbackHandler) => {
         // --- ГОЛОВНИЙ ДАШБОРД (Фото 1) ---
         if (data === 'admin_dashboard' || data === 'admin_main') {
             await bot.answerCallbackQuery(query.id).catch(() => { });
+
+            const user = await User.findOne({ telegramId: chatId.toString() });
+
+            // Витягуємо ID з env
+            const adminEnvId = process.env.ADMIN_TELEGRAM_ID;
+
+            // Перевірка: або ID збігається з env, або роль у базі 'admin'
+            if (chatId.toString() !== adminEnvId && (!user || user.role !== 'admin')) {
+                return bot.answerCallbackQuery(query.id, {
+                    text: "⛔️ Доступ заборонено! Ви не є адміністратором.",
+                    show_alert: true
+                });
+            }
+
             return renderAdminDashboard(bot, chatId, messageId);
         }
 

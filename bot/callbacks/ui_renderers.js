@@ -136,12 +136,29 @@ const renderSubscriptionShop = async (bot, chatId, messageId, backTarget) => {
 
     keyboard.inline_keyboard.push([{ text: '⬅️ Назад', callback_data: backTarget }]);
 
-    return await bot.editMessageText(message, {
+    const options = {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: 'Markdown',
         reply_markup: keyboard
-    });
+    };
+
+    try {
+        // Спроба відредагувати існуюче повідомлення
+        return await bot.editMessageText(message, options);
+    } catch (err) {
+        // Якщо це інвойс (який не можна редагувати), Telegram викине помилку
+        if (err.message.includes('message can\'t be edited') || err.message.includes('message to edit not found')) {
+            // Видаляємо старий інвойс
+            await bot.deleteMessage(chatId, messageId).catch(() => { });
+            // Надсилаємо магазин новим повідомленням
+            return await bot.sendMessage(chatId, message, {
+                parse_mode: 'Markdown',
+                reply_markup: keyboard
+            });
+        }
+        console.error("Помилка рендеру магазину:", err.message);
+    }
 };
 
 const renderSourcesList = async (bot, chatId, messageId, chId) => {
@@ -151,45 +168,41 @@ const renderSourcesList = async (bot, chatId, messageId, chId) => {
     let text = `📋 <b>Telegram-джерела для:</b> ${ch.channelUsername || 'каналу'}\n\n`;
     const keyboard = [];
 
-    // Відображаємо лише Telegram канали
     if (ch.tgSources && ch.tgSources.length > 0) {
         text += `📱 <b>Список підключених каналів:</b>\n`;
         ch.tgSources.forEach((src, index) => {
-            // Використовуємо <code> для зручного копіювання посилання
             text += `${index + 1}. <code>${src.url}</code>\n`;
-            
-            // Кнопка видалення для кожного джерела
-            keyboard.push([{ 
-                text: `🗑 Видалити джерело №${index + 1}`, 
-                callback_data: `remove_tgsrc_${chId}_${index}` 
+            keyboard.push([{
+                text: `🗑 Видалити джерело №${index + 1}`,
+                callback_data: `remove_tgsrc_${chId}_${index}`
             }]);
         });
     } else {
         text += `<i>Джерел поки не додано. Бот не має звідки брати контент.</i>`;
     }
 
-    // Кнопки управління
-    keyboard.push([
-        { text: '➕ Додати TG Канал', callback_data: `add_tgsrc_${chId}` },
-    ]);
+    keyboard.push([{ text: '➕ Додати TG Канал', callback_data: `add_tgsrc_${chId}` }]);
+    keyboard.push([{ text: '⬅️ Назад до налаштувань', callback_data: `manage_${chId}` }]);
 
-    keyboard.push([{ 
-        text: '⬅️ Назад до налаштувань', 
-        callback_data: `manage_${chId}` 
-    }]);
+    const options = {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: keyboard }
+    };
 
     try {
-        await bot.editMessageText(text, {
-            chat_id: chatId,
-            message_id: messageId,
-            parse_mode: 'HTML',
-            disable_web_page_preview: true,
-            reply_markup: { inline_keyboard: keyboard }
-        });
-    } catch (err) {
-        if (!err.message.includes('message is not modified')) {
-            console.error("Помилка рендеру списку джерел:", err);
+        if (messageId) {
+            // Намагаємося відредагувати старе меню
+            await bot.editMessageText(text, options);
+        } else {
+            // Якщо ID немає — шлемо нове повідомлення
+            await bot.sendMessage(chatId, text, options);
         }
+    } catch (err) {
+        // Якщо редагування неможливе (наприклад, повідомлення застаріло), шлемо нове
+        await bot.sendMessage(chatId, text, options);
     }
 };
 

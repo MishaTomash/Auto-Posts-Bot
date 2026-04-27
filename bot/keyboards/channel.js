@@ -13,7 +13,7 @@ const getChannelSettingsKeyboard = (ch, user) => {
             { text: '⏱ Налаштувати час', callback_data: `edit_interval_${ch._id}` }
         ],
         [{
-            text: canUseAI ? '🤖 AI Налаштування' : '🔒 AI Налаштування (Premium)',
+            text: canUseAI ? '🤖 AI Налаштування' : '🔒 AI Налаштування ',
             callback_data: canUseAI ? `edit_prompt_${ch._id}` : `locked_feature_ai`
         }],
         [{ text: '🔗 Перейти в канал', url: `https://t.me/${ch.channelId?.replace('@', '')}` }],

@@ -238,7 +238,12 @@ const channelHandler = async (bot, query, user, callbacks) => {
                 console.error("🔴 Toggle Error:", e.message);
             }
         }
-
+        if (data === 'locked_feature_ai') {
+            return bot.answerCallbackQuery(query.id, {
+                text: "🔒 Ця функція доступна лише у платному тарифі.\n\nБудь ласка, оновіть підписку в головному меню, щоб налаштовувати власні AI промпти!",
+                show_alert: true // Це покаже повноцінне вікно з кнопкою "OK", а не просто плашку
+            });
+        }
 
         // --- РЕДАГУВАННЯ AI ПРОМПТУ (ЛОГІКА КНОПОК) ---
 

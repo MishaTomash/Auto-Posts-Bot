@@ -38,5 +38,56 @@ const rewriteNews = async (title, content, customPrompt = null) => {
         return null;
     }
 };
+const checkIsAdvertisement = async (text) => {
+    if (!text || text.trim().length < 10) return false;
 
-module.exports = { rewriteNews, sanitizeForTelegram, DEFAULT_PROMPT };
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+                {
+                    role: "system",
+                    content: `Ти — фільтр рекламного контенту для новинного агрегатора.
+
+Визнач, чи є текст РЕКЛАМОЮ.
+
+Реклама — це:
+- Пряма пропозиція купити товар/послугу
+- Заклик підписатися на платний сервіс або канал за винагороду
+- Промокоди, знижки, розпродажі
+- Партнерські/реферальні посилання
+- Фрази: "купи зараз", "тільки сьогодні", "замов", "переходь за посиланням"
+- Прихована реклама (нативна): "я користуюсь цим продуктом і рекомендую"
+
+НЕ реклама:
+- Новини про компанії, навіть якщо згадуються продукти
+- Аналітика ринку
+- Редакційні огляди без CTA
+- Анонси безкоштовних подій
+
+Відповідай ТІЛЬКИ JSON без зайвого тексту:
+{"isAd": true/false, "confidence": 0.0-1.0, "reason": "коротко чому"}`
+                },
+                {
+                    role: "user",
+                    content: text.substring(0, 1000) // обрізаємо довгі тексти
+                }
+            ],
+            temperature: 0,
+            response_format: { type: "json_object" },
+        });
+
+        const result = JSON.parse(response.choices[0].message.content);
+
+        console.log(`🔍 Ad check: isAd=${result.isAd}, confidence=${result.confidence}, reason="${result.reason}"`);
+
+        // Блокуємо тільки якщо модель впевнена (>= 0.75)
+        return result.isAd === true && result.confidence >= 0.75;
+
+    } catch (error) {
+        console.error("❌ Помилка AI фільтра реклами:", error.message);
+        return false;
+    }
+};
+
+module.exports = { rewriteNews, sanitizeForTelegram, DEFAULT_PROMPT, checkIsAdvertisement };

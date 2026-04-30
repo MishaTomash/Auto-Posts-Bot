@@ -1,6 +1,6 @@
 const Channel = require('../models/Channel');
 const Post = require('../models/Post');
-const { rewriteNews, sanitizeForTelegram } = require('./aiService');
+const { rewriteNews, sanitizeForTelegram, checkIsAdvertisement } = require('./aiService');
 const { getUnsplashImage } = require('./imageService');
 const { getLatestPosts } = require('./tgParserService');
 const fs = require('fs');
@@ -57,173 +57,236 @@ const bufferToTempFile = async (buffer, mediaType) => {
 // services/postService.js
 
 let isProcessing = false;
+const isPostAdvertisement = async (post) => {
+    // Збираємо весь текст поста в одне місце
+    const textParts = [];
 
-// services/postService.js
+    if (post.text) textParts.push(post.text);
 
+    // Для альбомів перевіряємо підпис першого елемента
+    if (post.isGroup && post.items?.[0]?.text) {
+        textParts.push(post.items[0].text);
+    }
+
+    const fullText = textParts.join('\n').trim();
+    if (!fullText) return false; // Немає тексту — пропускаємо перевірку
+
+    return await checkIsAdvertisement(fullText);
+};
+// 1. Перевіряє чи вичерпано ліміт постів
+// ─────────────────────────────────────────────
+const checkLimit = (user) => {
+    return user.dailyPostStats.count >= (user.subscription?.maxPostsPerDay || 5);
+};
+
+// ─────────────────────────────────────────────
+// 2. Фільтрує канали за розкладом / інтервалом
+// ─────────────────────────────────────────────
+const filterChannels = (channels, now, specificUserId) => {
+    const currentHour = now.getHours();
+
+    return channels.filter(ch => {
+        if (specificUserId) return true;
+
+        if (ch.scheduleMode === 'daily') {
+            if (!ch.dailySchedule?.includes(currentHour)) return false;
+            if (ch.lastCheckAt) {
+                const last = new Date(ch.lastCheckAt);
+                if (last.getHours() === currentHour && last.getDate() === now.getDate()) return false;
+            }
+            return true;
+        }
+
+        if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
+        const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
+        return now >= nextCheck;
+    });
+};
+
+// ─────────────────────────────────────────────
+// 3. Завантажує нові пости й ставить закладку при ініціалізації
+// ─────────────────────────────────────────────
+const fetchNewPosts = async (channel, source) => {
+    const newPosts = await getLatestPosts(source.url, source.lastMessageId);
+
+    if (newPosts.length === 1 && newPosts[0].isInitial) {
+        await Channel.updateOne(
+            { _id: channel._id, "tgSources.url": source.url },
+            { $set: { "tgSources.$.lastMessageId": newPosts[0].maxId } }
+        );
+        console.log(`🆕 [INIT] Закладка встановлена на ID: ${newPosts[0].maxId}`);
+        return [];
+    }
+
+    return newPosts ?? [];
+};
+
+// ─────────────────────────────────────────────
+// 4. Надсилає альбом (група медіа)
+// ─────────────────────────────────────────────
+const sendAlbum = async (bot, targetId, post, promptToUse) => {
+    const tmpFiles = [];
+    const mediaGroup = [];
+
+    for (let i = 0; i < post.items.length; i++) {
+        const item = post.items[i];
+        if (!item.media) continue;
+
+        const tmpPath = await bufferToTempFile(item.media, item.mediaType);
+        tmpFiles.push(tmpPath);
+
+        const mediaItem = {
+            type: item.mediaType === 'photo' ? 'photo' : 'video',
+            media: fs.createReadStream(tmpPath),
+        };
+
+        if (i === 0 && item.text) {
+            const aiCaption = await rewriteNews("", item.text, promptToUse);
+            mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
+            mediaItem.parse_mode = 'HTML';
+        }
+
+        mediaGroup.push(mediaItem);
+    }
+
+    if (mediaGroup.length > 0) {
+        await bot.sendMediaGroup(targetId, mediaGroup);
+    }
+
+    tmpFiles.forEach(f => fs.unlink(f, () => { }));
+    return mediaGroup.length > 0;
+};
+
+// ─────────────────────────────────────────────
+// 5. Надсилає одиночний пост (фото / відео / текст)
+// ─────────────────────────────────────────────
+const sendSingle = async (bot, targetId, post, promptToUse) => {
+    let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
+    const safeText = aiText ? sanitizeForTelegram(aiText) : "";
+    const options = { caption: safeText.substring(0, 1024), parse_mode: 'HTML' };
+
+    if (post.media) {
+        const tmpPath = await bufferToTempFile(post.media, post.mediaType);
+        const stream = fs.createReadStream(tmpPath);
+
+        if (post.mediaType === 'photo') await bot.sendPhoto(targetId, stream, options);
+        else if (post.mediaType === 'video') await bot.sendVideo(targetId, stream, options);
+        else await bot.sendDocument(targetId, stream, options);
+
+        fs.unlink(tmpPath, () => { });
+        return true;
+    }
+
+    if (safeText) {
+        await bot.sendMessage(targetId, safeText, { parse_mode: 'HTML' });
+        return true;
+    }
+
+    return false;
+};
+
+// ─────────────────────────────────────────────
+// 6. Публікує один пост: перевірка дублів + відправка
+// ─────────────────────────────────────────────
+const publishPost = async (bot, channel, source, post, user, promptToUse) => {
+    const postLink = post.isGroup
+        ? `${source.url}/${post.maxId}`
+        : `${source.url}/${post.id}`;
+
+    const postExists = await Post.findOne({ channelId: channel.channelId, originalLink: postLink });
+    if (postExists) return;
+
+    try {
+        const targetId = channel.channelId;
+        const success = post.isGroup
+            ? await sendAlbum(bot, targetId, post, promptToUse)
+            : await sendSingle(bot, targetId, post, promptToUse);
+
+        if (success) {
+            await finishPost(channel, source, post.isGroup ? post.maxId : post.id, postLink, user);
+            console.log(`✅ Пост ${postLink} успішно опубліковано.`);
+        }
+    } catch (sendError) {
+        console.error(`❌ Помилка відправки:`, sendError.message);
+        await Channel.updateOne(
+            { _id: channel._id, "tgSources.url": source.url },
+            { $set: { "tgSources.$.lastMessageId": post.isGroup ? post.maxId : post.id } }
+        );
+    }
+};
+
+// ─────────────────────────────────────────────
+// 7. Обробляє одне джерело (tgSource) для каналу
+// ─────────────────────────────────────────────
+const processSource = async (bot, channel, source, user, promptToUse) => {
+    try {
+        console.log(`📡 Джерело: ${source.url} (Last ID: ${source.lastMessageId})`);
+
+        const newPosts = await fetchNewPosts(channel, source);
+        if (newPosts.length === 0) return;
+
+        console.log(`📨 Знайдено нових постів: ${newPosts.length}`);
+
+        for (const post of newPosts) {
+            if (checkLimit(user)) {
+                console.log(`🛑 Ліміт вичерпано для ${user.telegramId}`);
+                break;
+            }
+
+            // --- Фільтр реклами ---
+            const isAd = await isPostAdvertisement(post);
+            if (isAd) {
+                console.log(`⏩ Рекламу пропущено: ${source.url}`);
+                // Оновлюємо ID щоб не повертатись до цього поста
+                await Channel.updateOne(
+                    { _id: channel._id, "tgSources.url": source.url },
+                    { $set: { "tgSources.$.lastMessageId": post.isGroup ? post.maxId : post.id } }
+                );
+                continue;
+            }
+            // ----------------------
+
+            await publishPost(bot, channel, source, post, user, promptToUse);
+        }
+    } catch (err) {
+        console.error(`❌ Помилка джерела ${source.url}:`, err.message);
+    }
+};
+
+// ─────────────────────────────────────────────
+// 8. Головна функція — тонка оркестрація
+// ─────────────────────────────────────────────
 const processNews = async (bot, specificUserId = null) => {
     if (isProcessing) return;
 
     try {
         isProcessing = true;
         const now = new Date();
-        const currentHour = now.getHours();
 
-        // 1. Фільтрація активних каналів
         const query = { isActive: true };
         if (specificUserId) query.userId = specificUserId;
 
         const allActiveChannels = await Channel.find(query).populate('userId');
-
-        const channels = allActiveChannels.filter(ch => {
-            if (specificUserId) return true; // Кнопка "Перевірити зараз" ігнорує таймери
-
-            // Логіка Розкладу (Конкретні години)
-            if (ch.scheduleMode === 'daily') {
-                const isTime = ch.dailySchedule?.includes(currentHour);
-                if (!isTime) return false;
-
-                if (ch.lastCheckAt) {
-                    const lastCheck = new Date(ch.lastCheckAt);
-                    if (lastCheck.getHours() === currentHour && lastCheck.getDate() === now.getDate()) {
-                        return false; // Вже перевірено в цю годину
-                    }
-                }
-                return true;
-            }
-
-            // Логіка Інтервалів (напр. кожна 1 хв)
-            if (!ch.lastCheckAt || ch.lastCheckAt.getTime() === 0) return true;
-            const nextCheck = new Date(ch.lastCheckAt.getTime() + ch.checkInterval * 60000);
-            return now >= nextCheck;
-        });
+        const channels = filterChannels(allActiveChannels, now, specificUserId);
 
         if (channels.length === 0) return;
-
         console.log(`🔍 [LOG] Перевірка для ${channels.length} каналів.`);
 
         for (const channel of channels) {
             console.log(`🔹 Проєкт: ${channel.channelUsername}`);
-
-            // Оновлюємо час перевірки в базі
             await Channel.findByIdAndUpdate(channel._id, { lastCheckAt: now });
 
             const promptToUse = await processSingleChannel(bot, channel);
-            if (promptToUse === false) continue; // Ліміти вичерпано
+            if (promptToUse === false) continue;
 
-            const user = channel.userId;
-
-            if (channel.tgSources && channel.tgSources.length > 0) {
-                for (let source of channel.tgSources) {
-                    try {
-                        console.log(`📡 Джерело: ${source.url} (Last ID: ${source.lastMessageId})`);
-                        const newPosts = await getLatestPosts(source.url, source.lastMessageId);
-
-                        // Ініціалізація (запобігання спаму старими постами)
-                        if (newPosts.length === 1 && newPosts[0].isInitial) {
-                            await Channel.updateOne(
-                                { _id: channel._id, "tgSources.url": source.url },
-                                { $set: { "tgSources.$.lastMessageId": newPosts[0].maxId } }
-                            );
-                            console.log(`🆕 [INIT] Закладка встановлена на ID: ${newPosts[0].maxId}`);
-                            continue;
-                        }
-
-                        if (!newPosts || newPosts.length === 0) continue;
-
-                        console.log(`📨 Знайдено нових постів: ${newPosts.length}`);
-
-                        for (const post of newPosts) {
-                            // Перевірка ліміту підписки перед кожним постом
-                            if (user.dailyPostStats.count >= (user.subscription?.maxPostsPerDay || 5)) {
-                                console.log(`🛑 Ліміт вичерпано для ${user.telegramId}`);
-                                break;
-                            }
-
-                            const postLink = post.isGroup ? `${source.url}/${post.maxId}` : `${source.url}/${post.id}`;
-                            const postExists = await Post.findOne({ channelId: channel.channelId, originalLink: postLink });
-                            if (postExists) continue;
-
-                            // ВІДПРАВКА КОНТЕНТУ
-                            try {
-                                const targetId = channel.channelId;
-                                let success = false;
-
-                                if (post.isGroup) {
-                                    // Обробка альбому
-                                    const tmpFiles = [];
-                                    const mediaGroup = [];
-
-                                    for (let i = 0; i < post.items.length; i++) {
-                                        const item = post.items[i];
-                                        if (!item.media) continue;
-                                        const tmpPath = await bufferToTempFile(item.media, item.mediaType);
-                                        tmpFiles.push(tmpPath);
-
-                                        const mediaItem = {
-                                            type: item.mediaType === 'photo' ? 'photo' : 'video',
-                                            media: fs.createReadStream(tmpPath),
-                                        };
-
-                                        if (i === 0 && item.text) {
-                                            const aiCaption = await rewriteNews("", item.text, promptToUse);
-                                            mediaItem.caption = sanitizeForTelegram(aiCaption).substring(0, 1024);
-                                            mediaItem.parse_mode = 'HTML';
-                                        }
-                                        mediaGroup.push(mediaItem);
-                                    }
-
-                                    if (mediaGroup.length > 0) {
-                                        await bot.sendMediaGroup(targetId, mediaGroup);
-                                        success = true;
-                                    }
-                                    tmpFiles.forEach(f => fs.unlink(f, () => { }));
-
-                                } else {
-                                    // Одиночний пост
-                                    let aiText = post.text ? await rewriteNews("", post.text, promptToUse) : "";
-                                    const safeText = aiText ? sanitizeForTelegram(aiText) : "";
-
-                                    if (post.media) {
-                                        const tmpPath = await bufferToTempFile(post.media, post.mediaType);
-                                        const stream = fs.createReadStream(tmpPath);
-                                        const options = { caption: safeText.substring(0, 1024), parse_mode: 'HTML' };
-
-                                        if (post.mediaType === 'photo') await bot.sendPhoto(targetId, stream, options);
-                                        else if (post.mediaType === 'video') await bot.sendVideo(targetId, stream, options);
-                                        else await bot.sendDocument(targetId, stream, options);
-
-                                        fs.unlink(tmpPath, () => { });
-                                        success = true;
-                                    } else if (safeText) {
-                                        await bot.sendMessage(targetId, safeText, { parse_mode: 'HTML' });
-                                        success = true;
-                                    }
-                                }
-
-                                if (success) {
-                                    await finishPost(channel, source, post.isGroup ? post.maxId : post.id, postLink, user);
-                                    console.log(`✅ Пост ${postLink} успішно опубліковано.`);
-                                }
-
-                            } catch (sendError) {
-                                console.error(`❌ Помилка відправки:`, sendError.message);
-                                // Пропускаємо ID, щоб не зациклюватися на помилці
-                                await Channel.updateOne(
-                                    { _id: channel._id, "tgSources.url": source.url },
-                                    { $set: { "tgSources.$.lastMessageId": post.isGroup ? post.maxId : post.id } }
-                                );
-                            }
-                        }
-                    } catch (sourceErr) {
-                        console.error(`❌ Помилка джерела ${source.url}:`, sourceErr.message);
-                    }
-                }
+            for (const source of channel.tgSources ?? []) {
+                await processSource(bot, channel, source, channel.userId, promptToUse);
             }
         }
-    } catch (globalErr) {
-        console.error("❌ Глобальна помилка processNews:", globalErr.message);
+    } catch (err) {
+        console.error("❌ Глобальна помилка processNews:", err.message);
     } finally {
-        isProcessing = false; // Звільняємо блокування в будь-якому випадку
+        isProcessing = false;
     }
 };
 

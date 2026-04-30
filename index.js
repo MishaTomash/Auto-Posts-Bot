@@ -28,7 +28,7 @@ mongoose.connect(process.env.MONGODB_URI)
 // ─── CRON ─────────────────────────────────────────────────────────────────────
 
 // Перевірка підписок — кожну хвилину (потрібно для 5-хвилинного тесту; на проді: '0 * * * *')
-cron.schedule('* * * * *', async () => {
+cron.schedule('0 10 * * *', async () => {
     await checkSubscriptions(bot).catch(err => console.error('Sub Cron Error:', err.message));
 });
 
@@ -79,7 +79,7 @@ bot.on('successful_payment', async (msg) => {
 
         // Логіка дати: якщо продовжує той самий тариф — додаємо до поточного кінця
         const now = Date.now();
-        const DURATION = 5 * 60 * 1000; // 5 хвилин (на проді: 30 * 24 * 60 * 60 * 1000)
+        const DURATION = 30 * 24 * 60 * 60 * 1000; // 5 хвилин (на проді: 30 * 24 * 60 * 60 * 1000)
 
         let newExpiration;
         if (

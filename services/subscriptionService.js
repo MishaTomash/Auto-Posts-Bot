@@ -4,8 +4,7 @@ const Channel = require('../models/Channel');
 const Plan = require('../models/Plan');
 
 // ─── Константи часу ───────────────────────────────────────────────────────────
-const SUBSCRIPTION_DURATION_MS = 5 * 60 * 1000;   // 5 хвилин (для прод: 30 * 24 * 60 * 60 * 1000)
-const REMINDER_BEFORE_MS       = 3 * 60 * 1000;   // Нагадати за 3 хвилини до кінця
+const REMINDER_BEFORE_MS       = 2 * 24 * 60 * 60 * 1000;
 
 // ─── Скинути користувача на FREE ─────────────────────────────────────────────
 const downgradeToFree = async (user) => {

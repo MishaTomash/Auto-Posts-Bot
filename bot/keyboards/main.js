@@ -1,11 +1,16 @@
+// bot/keyboards/main.js
+
 const getMainMenu = (isAdmin = false) => {
     const buttons = [
         [{ text: '➕ Створити проект', callback_data: 'start_wizard' }],
-        [{ text: '📊 Мої канали', callback_data: 'list_channels' }, { text: '👤 Профіль', callback_data: 'my_profile' }],
-        [{ text: '💎 Купити підписку (Stars)', callback_data: 'subscription_shop' }]
+        [
+            { text: '📊 Мої канали',  callback_data: 'list_channels' },
+            { text: '👤 Профіль',     callback_data: 'my_profile'    }
+        ],
+        [{ text: '💎 Купити підписку (Stars)', callback_data: 'subscription_shop' }],
+        [{ text: '📖 Інструкція',              callback_data: 'instr_main'        }],
     ];
 
-    // Додаємо кнопку адміна в той самий блок, як на фото 2
     if (isAdmin) {
         buttons.push([{ text: '🛠 Адміністратор', callback_data: 'admin_dashboard' }]);
     }

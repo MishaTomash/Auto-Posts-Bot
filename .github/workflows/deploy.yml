@@ -20,7 +20,7 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            # Створюємо окрему папку для нового бота, якщо її немає
+            # Переходимо в папку проекту або клонуємо її, якщо це перший раз
             if [ ! -d "~/auto-posts-bot" ]; then
               git clone https://github.com/${{ github.repository }}.git ~/auto-posts-bot
               cd ~/auto-posts-bot
@@ -29,9 +29,8 @@ jobs:
               git pull origin main
             fi
             
-            # Встановлюємо залежності та білдимо (для TypeScript)
+            # Встановлюємо залежності
             npm install
-            npm run build
             
-            # Перезапускаємо або запускаємо процес під унікальним іменем
-            pm2 restart "auto-posts-bot" --update-env || pm2 start dist/index.js --name "auto-posts-bot"
+            # Запускаємо або перезапускаємо бота в PM2 через головний index.js
+            pm2 restart "auto-posts-bot" --update-env || pm2 start index.js --name "auto-posts-bot"

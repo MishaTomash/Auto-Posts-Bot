@@ -1,0 +1,37 @@
+name: Deploy Auto-Posts-Bot
+
+on:
+  push:
+    branches:
+      - main # перевір, чи у тебе main, чи master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            # Створюємо окрему папку для нового бота, якщо її немає
+            if [ ! -d "~/auto-posts-bot" ]; then
+              git clone https://github.com/${{ github.repository }}.git ~/auto-posts-bot
+              cd ~/auto-posts-bot
+            else
+              cd ~/auto-posts-bot
+              git pull origin main
+            fi
+            
+            # Встановлюємо залежності та білдимо (для TypeScript)
+            npm install
+            npm run build
+            
+            # Перезапускаємо або запускаємо процес під унікальним іменем
+            pm2 restart "auto-posts-bot" --update-env || pm2 start dist/index.js --name "auto-posts-bot"

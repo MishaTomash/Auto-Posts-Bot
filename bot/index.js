@@ -7,7 +7,7 @@ const handleMessages = require('./handlers/index');
 const { mainMenu } = require('./keyboards/main');
 const { adminMenu } = require('./keyboards/admin');
 const { getChannelSettingsKeyboard } = require('./keyboards/channel');
-const Payment = require('../models/Payment'); // Додай це сюди
+const Payment = require('../models/Payment'); 
 
 const setupBotCommands = (bot) => {
 
@@ -153,10 +153,44 @@ const setupBotCommands = (bot) => {
     );
     console.log("KEYS IN CALLBACKS:", Object.keys(callbacks));
     // можна було викликати callbacks.renderPromptSettings
-    bot.on('message', (msg) =>
-        handleMessages(bot, msg, callbacks)
-    );
+    async function handleAddingSource(bot, msg, user) {
+        const chatId = msg.chat.id;
+        const sourceLink = msg.text.trim();
+        const channelId = user.tempData.targetChannelId;
 
+        // Логіка додавання посилання в Channel...
+        const ch = await Channel.findById(channelId);
+        if (ch) {
+            ch.tgSources.push({ url: sourceLink, lastMessageId: 0 });
+            await ch.save();
+        }
+
+        // ВАЖЛИВО: Очищуємо стан після успіху
+        await User.findOneAndUpdate(
+            { telegramId: chatId.toString() },
+            { tempState: null, tempData: {} }
+        );
+
+        await bot.sendMessage(chatId, "✅ Джерело додано!");
+        // Повертаємо користувача в налаштування каналу
+        return callbacks.showChannelSettings(chatId, channelId);
+    }
+    bot.on('message', async (msg) => {
+        const chatId = msg.chat.id;
+        if (!msg.text) return; // Ігноруємо нетекстові повідомлення
+
+        // 1. Отримуємо користувача з бази
+        const user = await User.findOne({ telegramId: chatId.toString() });
+
+        // 2. ПЕРЕВІРКА СТАНУ (Тут "магія")
+        if (user && user.tempState === 'WAITING_TG_SOURCE') {
+            // Викликаємо функцію обробки посилання
+            return handleAddingSource(bot, msg, user);
+        }
+
+        // 3. Якщо станів немає, виконуємо звичайні команди
+        return handleMessages(bot, msg, callbacks);
+    });
 };
 
 module.exports = { setupBotCommands };

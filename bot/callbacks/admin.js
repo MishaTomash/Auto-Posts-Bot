@@ -111,7 +111,7 @@ const adminHandler = async (bot, query, user, callbackHandler) => {
             const channelCount = await Channel.countDocuments({ userId: targetUser._id });
 
             const text = `👤 <b>Картка користувача</b>\n━━━━━━━━━━━━━━━━━━\n` +
-                `<b>Ім'я:</b> ${targetUser.username || 'Немає'}\n` +
+                `<b>Ім'я:</b> @${targetUser.username || 'Немає'}\n` +
                 `<b>ID:</b> <code>${targetUser.telegramId}</code>\n` +
                 `<b>Роль:</b> ${targetUser.role}\n` +
                 `<b>Тариф:</b> ${targetUser.subscription?.plan?.toUpperCase() || 'FREE'}\n` +

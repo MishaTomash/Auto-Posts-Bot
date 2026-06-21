@@ -20,17 +20,22 @@ const callbackHandler = async (bot, query, sendMainMenu, callbacks) => {
 
         const helpers = { sendMainMenu, ...callbacks };
 
-        // Адмін
-        if (data.startsWith('admin_')) {
+        // Адмін + підтвердження/відхилення платежів (тільки адмін натискає)
+        if (
+            data.startsWith('admin_') ||
+            data.startsWith('payment_confirm_') ||
+            data.startsWith('payment_reject_')
+        ) {
             return await adminHandler(bot, query, user, callbackHandler);
         }
 
-        // Профіль / магазин
+        // Профіль / магазин / оплата
         if (
-            data === 'my_profile' ||
+            data === 'my_profile'        ||
             data === 'subscription_shop' ||
+            data === 'upgrade_plan'      ||
             data.startsWith('buy_plan_') ||
-            data === 'upgrade_plan'
+            data.startsWith('i_paid_')
         ) {
             return await profileHandler(bot, query, user, helpers);
         }

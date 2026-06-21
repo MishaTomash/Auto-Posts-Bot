@@ -1,23 +1,39 @@
 // services/subscriptionService.js
-const User = require('../models/User');
+const User    = require('../models/User');
 const Channel = require('../models/Channel');
-const Plan = require('../models/Plan');
+const Plan    = require('../models/Plan');
 
 // ─── Константи часу ───────────────────────────────────────────────────────────
-const REMINDER_BEFORE_MS       = 2 * 24 * 60 * 60 * 1000;
+const REMINDER_BEFORE_MS = 2 * 24 * 60 * 60 * 1000;
 
 // ─── Скинути користувача на FREE ─────────────────────────────────────────────
 const downgradeToFree = async (user) => {
     const freePlan = await Plan.findOne({ name: 'free' });
 
-    user.subscription.plan             = 'free';
-    user.subscription.expiresAt        = null;
+    user.subscription.plan               = 'free';
+    user.subscription.expiresAt          = null;
     user.subscription.expiryReminderSent = false;
-    user.subscription.maxChannels      = freePlan?.maxChannels      ?? 1;
-    user.subscription.maxPostsPerDay   = freePlan?.maxPostsPerDay   ?? 5;
-    user.subscription.hasCustomPrompt  = freePlan?.hasCustomPrompt  ?? false;
+    user.subscription.maxChannels        = freePlan?.maxChannels      ?? 1;
+    user.subscription.maxPostsPerDay     = freePlan?.maxPostsPerDay   ?? 5;
+    user.subscription.canCustomPrompt    = freePlan?.hasCustomPrompt  ?? false;
 
     await user.save();
+};
+
+// ─── Активувати підписку після підтвердження оплати ──────────────────────────
+const activateSubscription = async (user, plan) => {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30); // завжди 30 днів
+
+    user.subscription.plan               = plan.name;
+    user.subscription.expiresAt          = expiresAt;
+    user.subscription.expiryReminderSent = false;
+    user.subscription.maxChannels        = plan.maxChannels;
+    user.subscription.maxPostsPerDay     = plan.maxPostsPerDay;
+    user.subscription.canCustomPrompt    = plan.hasCustomPrompt ?? false;
+
+    await user.save();
+    await activateChannelsOnUpgrade(user);
 };
 
 // ─── Зупинити всі канали користувача ─────────────────────────────────────────
@@ -28,8 +44,7 @@ const pauseAllChannels = async (userId) => {
 // ─── Активувати канали в межах ліміту тарифу ─────────────────────────────────
 const activateChannelsOnUpgrade = async (user) => {
     const maxAllowed = user.subscription.maxChannels;
-    // Беремо канали від найстарішого: перші N стають активними, решта — ні
-    const channels = await Channel.find({ userId: user._id }).sort({ createdAt: 1 });
+    const channels   = await Channel.find({ userId: user._id }).sort({ createdAt: 1 });
 
     for (let i = 0; i < channels.length; i++) {
         const shouldBeActive = i < maxAllowed;
@@ -47,18 +62,18 @@ const checkSubscriptions = async (bot) => {
     const now = new Date();
 
     try {
-        // 1. НАГАДУВАННЯ (підписка закінчується протягом REMINDER_BEFORE_MS)
+        // 1. НАГАДУВАННЯ
         const reminderDeadline = new Date(now.getTime() + REMINDER_BEFORE_MS);
 
         const usersToRemind = await User.find({
-            'subscription.plan': { $ne: 'free' },
-            'subscription.expiresAt': { $gt: now, $lte: reminderDeadline },
+            'subscription.plan':               { $ne: 'free' },
+            'subscription.expiresAt':          { $gt: now, $lte: reminderDeadline },
             'subscription.expiryReminderSent': { $ne: true }
         });
 
         for (const user of usersToRemind) {
-            const msLeft   = user.subscription.expiresAt - now;
-            const minLeft  = Math.max(1, Math.round(msLeft / 60000));
+            const msLeft  = user.subscription.expiresAt - now;
+            const minLeft = Math.max(1, Math.round(msLeft / 60000));
 
             try {
                 await bot.sendMessage(
@@ -85,9 +100,9 @@ const checkSubscriptions = async (bot) => {
             }
         }
 
-        // 2. ДЕАКТИВАЦІЯ (термін підписки вийшов)
+        // 2. ДЕАКТИВАЦІЯ
         const expiredUsers = await User.find({
-            'subscription.plan': { $ne: 'free' },
+            'subscription.plan':      { $ne: 'free' },
             'subscription.expiresAt': { $lt: now }
         });
 
@@ -122,4 +137,10 @@ const checkSubscriptions = async (bot) => {
     }
 };
 
-module.exports = { checkSubscriptions, activateChannelsOnUpgrade, pauseAllChannels, downgradeToFree };
+module.exports = {
+    checkSubscriptions,
+    activateSubscription,
+    activateChannelsOnUpgrade,
+    pauseAllChannels,
+    downgradeToFree
+};

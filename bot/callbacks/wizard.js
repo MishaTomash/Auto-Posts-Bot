@@ -63,4 +63,4 @@ const wizardHandler = async (bot, query, user) => {
     }
 };
 
-module.exports = wizardHandler; 
+module.exports = wizardHandler;

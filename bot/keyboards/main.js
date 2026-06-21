@@ -2,13 +2,13 @@
 
 const getMainMenu = (isAdmin = false) => {
     const buttons = [
-        [{ text: '➕ Створити проект', callback_data: 'start_wizard' }],
+        [{ text: '➕ Створити проект',   callback_data: 'start_wizard'       }],
         [
-            { text: '📊 Мої канали',  callback_data: 'list_channels' },
-            { text: '👤 Профіль',     callback_data: 'my_profile'    }
+            { text: '📊 Мої канали', callback_data: 'list_channels' },
+            { text: '👤 Профіль',    callback_data: 'my_profile'    }
         ],
-        [{ text: '💎 Купити підписку (Stars)', callback_data: 'subscription_shop' }],
-        [{ text: '📖 Інструкція',              callback_data: 'instr_main'        }],
+        [{ text: '💎 Купити підписку',   callback_data: 'subscription_shop'  }],
+        [{ text: '📖 Інструкція',        callback_data: 'instr_main'         }],
     ];
 
     if (isAdmin) {

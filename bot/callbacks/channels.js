@@ -1,41 +1,30 @@
 // bot/callbacks/channels.js
-//
-// Роутер усіх "не-адмінських" колбеків, пов'язаних з каналами користувача:
-// список каналів, налаштування, джерела, інтервал/розклад, AI-промпт, lifecycle.
-// Зовнішній інтерфейс не змінився — channelHandler(bot, query, user, callbacks).
-//
-// РЕФАКТОРИНГ: оригінальний файл (383 рядки) розбитий за доменом на
-// ./channel_modules/*. Порядок перевірок callback_data збережено ідентичним
-// оригіналу, тому поведінка не змінилась.
 
-const { handleListChannels, handleManageChannel } = require('./channel_modules/channelList');
+const { handleListChannels, handleManageChannel }              = require('./channel_modules/channelList');
 const { handleAddSourceStart, handleSourcesList, handleRemoveSource } = require('./channel_modules/sources');
 const {
-    handleEditIntervalMenu,
-    handleSetInterval,
-    handleManualIntervalStart,
-    handleOpenSchedule,
-    handleToggleHour,
-    handleSetModeInterval
+    handleEditIntervalMenu, handleSetInterval, handleManualIntervalStart,
+    handleOpenSchedule, handleToggleHour, handleSetModeInterval
 } = require('./channel_modules/schedule');
 const {
-    handleEditPromptMenu,
-    handleLockedAiFeature,
-    handleStartEditPrompt,
-    handleResetPrompt
+    handleEditPromptMenu, handleLockedAiFeature,
+    handleStartEditPrompt, handleResetPrompt
 } = require('./channel_modules/aiPrompt');
 const {
-    handleCheckOne,
-    handleForceCheckAll,
-    handleDeleteConfirmMenu,
-    handleConfirmDelete,
-    handleToggleActive
+    handleCheckOne, handleForceCheckAll,
+    handleDeleteConfirmMenu, handleConfirmDelete, handleToggleActive
 } = require('./channel_modules/lifecycle');
+const { handleScheduledPosts } = require('./channel_modules/scheduledPosts');
 
 const channelHandler = async (bot, query, user, callbacks) => {
     const { data } = query;
 
     try {
+        // --- Заплановані пости (sp_*) ---
+        if (data.startsWith('sp_')) {
+            return await handleScheduledPosts(bot, query, user, callbacks);
+        }
+
         // --- Додавання TG джерела ---
         if (data.startsWith('add_tgsrc_')) {
             return await handleAddSourceStart(bot, query);
@@ -67,7 +56,7 @@ const channelHandler = async (bot, query, user, callbacks) => {
             return await handleSetInterval(bot, query, user);
         }
 
-        // --- Перевірка одного каналу / усіх каналів ---
+        // --- Перевірка каналів ---
         if (data.startsWith('check_one_')) {
             return await handleCheckOne(bot, query, user);
         }

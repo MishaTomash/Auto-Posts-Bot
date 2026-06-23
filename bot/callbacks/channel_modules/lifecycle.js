@@ -5,19 +5,34 @@ const Channel = require('../../../models/Channel');
 const { processNews, processSingleChannel } = require('../../../services/postService');
 const { renderChannelSettings } = require('../ui_renderers');
 const { sendSubscriptionExpiredAlert } = require('./_shared');
+const { processSource } = require('../../../services/postService');
 
 const handleCheckOne = async (bot, query, user) => {
     const chatId = query.message.chat.id;
     const messageId = query.message.message_id;
     const { data } = query;
 
+    // Отримуємо ID каналу
     const chId = data.slice(10);
     const ch = await Channel.findById(chId).populate('userId');
     if (!ch) return bot.answerCallbackQuery(query.id, { text: '❌ Канал не знайдено' });
 
     await bot.answerCallbackQuery(query.id, { text: '⏳ Перевірка запущена...' });
-    await processSingleChannel(bot, ch);
 
+    // Оновлюємо час останньої перевірки (як це робиться в processNews)
+    await Channel.findByIdAndUpdate(chId, { lastCheckAt: new Date() });
+
+    // Отримуємо промпт (або false, якщо щось не так)
+    const promptToUse = await processSingleChannel(bot, ch);
+
+    // ДОДАНО: Проходимося по всіх джерелах каналу і парсимо їх
+    if (promptToUse !== false) {
+        for (const source of ch.tgSources ?? []) {
+            await processSource(bot, ch, source, ch.userId, promptToUse);
+        }
+    }
+
+    // Оновлюємо меню після завершення перевірки
     const updatedCh = await Channel.findById(chId);
     await renderChannelSettings(bot, chatId, messageId, updatedCh, user);
 

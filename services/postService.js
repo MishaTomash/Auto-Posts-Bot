@@ -315,4 +315,4 @@ async function finishPost(channel, source, lastId, link, user) {
 
 
 
-module.exports = { processNews, processSingleChannel };
+module.exports = { processNews, processSingleChannel, processSource };

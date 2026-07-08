@@ -1,10 +1,16 @@
 // bot/callbacks/channels.js
 
-const { handleListChannels, handleManageChannel }              = require('./channel_modules/channelList');
+const { handleListChannels, handleManageChannel } = require('./channel_modules/channelList');
 const { handleAddSourceStart, handleSourcesList, handleRemoveSource } = require('./channel_modules/sources');
 const {
-    handleEditIntervalMenu, handleSetInterval, handleManualIntervalStart,
-    handleOpenSchedule, handleToggleHour, handleSetModeInterval
+    handleEditIntervalMenu,
+    handleSetInterval,
+    handleManualIntervalStart,
+    handleOpenSchedule,
+    handleToggleHour,
+    handleSetDailyLimit,
+    handleSetModeInterval,
+    handleManualLimit
 } = require('./channel_modules/schedule');
 const {
     handleEditPromptMenu, handleLockedAiFeature,
@@ -15,6 +21,7 @@ const {
     handleDeleteConfirmMenu, handleConfirmDelete, handleToggleActive
 } = require('./channel_modules/lifecycle');
 const { handleScheduledPosts } = require('./channel_modules/scheduledPosts');
+
 
 const channelHandler = async (bot, query, user, callbacks) => {
     const { data } = query;
@@ -28,6 +35,15 @@ const channelHandler = async (bot, query, user, callbacks) => {
         // --- Додавання TG джерела ---
         if (data.startsWith('add_tgsrc_')) {
             return await handleAddSourceStart(bot, query);
+        }
+        if (data.startsWith('set_limit_')) {
+            return await handleSetDailyLimit(bot, query, user);
+        }
+        if (data.startsWith('manual_limit_')) {
+            return await handleManualLimitStart(bot, query);
+        }
+        if (data === 'noop') {
+            return bot.answerCallbackQuery(query.id);
         }
 
         // --- Список каналів ---

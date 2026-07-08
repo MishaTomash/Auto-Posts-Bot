@@ -121,7 +121,7 @@ function getChannelAdminControlKeyboard(chId) {
         inline_keyboard: [
             [{ text: '⚙️ Налаштування джерел', callback_data: `admin_ch_sources_${chId}` }],
             [{ text: '🗑 Видалити канал',        callback_data: `admin_ch_delete_${chId}` }],
-            [{ text: '⬅️ Назад до списку',       callback_data: 'admin_channels_list'     }]
+            [{ text: '⬅️ Назад до списку ',       callback_data: 'admin_channels_list'     }]
         ]
     };
 }

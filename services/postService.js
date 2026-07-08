@@ -228,23 +228,45 @@ const processSource = async (bot, channel, source, user, promptToUse) => {
         console.log(`📨 Знайдено нових постів: ${newPosts.length}`);
 
         for (const post of newPosts) {
+            // --- Ліміт користувача (підписка) ---
             if (checkLimit(user)) {
-                console.log(`🛑 Ліміт вичерпано для ${user.telegramId}`);
+                console.log(`🛑 Ліміт підписки вичерпано для ${user.telegramId}`);
                 break;
             }
+
+            // --- Ліміт каналу на день ---
+            const freshChannel = await Channel.findById(channel._id);
+            const channelLimit = freshChannel.dailyPostLimit ?? 10;
+            const channelUsed  = freshChannel.todayPostCount  ?? 0;
+
+            if (channelUsed >= channelLimit) {
+                console.log(`🛑 Денний ліміт каналу ${channel.channelUsername} вичерпано (${channelUsed}/${channelLimit})`);
+
+                // Повідомляємо адміна (лише один раз — коли лічильник рівно дорівнює ліміту)
+                if (channelUsed === channelLimit) {
+                    await bot.sendMessage(
+                        user.telegramId,
+                        `⚠️ <b>Ліміт постів досягнуто</b>\n` +
+                        `Канал <b>${channel.channelUsername}</b> опублікував ${channelLimit} постів сьогодні.\n` +
+                        `Публікації відновляться завтра о 00:00.`,
+                        { parse_mode: 'HTML' }
+                    ).catch(() => {});
+                }
+                break;
+            }
+            // ─────────────────────────────────────
 
             // --- Фільтр реклами ---
             const isAd = await isPostAdvertisement(post);
             if (isAd) {
                 console.log(`⏩ Рекламу пропущено: ${source.url}`);
-                // Оновлюємо ID щоб не повертатись до цього поста
                 await Channel.updateOne(
                     { _id: channel._id, "tgSources.url": source.url },
                     { $set: { "tgSources.$.lastMessageId": post.isGroup ? post.maxId : post.id } }
                 );
                 continue;
             }
-            // ----------------------
+            // ─────────────────────
 
             await publishPost(bot, channel, source, post, user, promptToUse);
         }
@@ -294,23 +316,24 @@ const processNews = async (bot, specificUserId = null) => {
  * Допоміжна функція для завершення посту: збереження в БД та оновлення лімітів
  */
 async function finishPost(channel, source, lastId, link, user) {
-    // Оновлюємо останній ID джерела в пам'яті та БД
     source.lastMessageId = lastId;
     await Channel.updateOne(
         { _id: channel._id, "tgSources.url": source.url },
         { $set: { "tgSources.$.lastMessageId": lastId } }
     );
 
-    // Створюємо запис про пост
     await Post.create({
         channelId: channel.channelId,
         originalLink: link,
         userId: user._id
     });
 
-    // Оновлюємо ліміти користувача
+    // Ліміт користувача (підписка)
     await User.findByIdAndUpdate(user._id, { $inc: { 'dailyPostStats.count': 1 } });
     user.dailyPostStats.count++;
+
+    // Ліміт каналу на день
+    await Channel.findByIdAndUpdate(channel._id, { $inc: { todayPostCount: 1 } });
 }
 
 

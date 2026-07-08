@@ -38,7 +38,7 @@ const handleManualIntervalStart = async (bot, query) => {
     const messageId = query.message.message_id;
     const { data } = query;
 
-    const chId = data.split('_')[2];
+    const chId = data.split('_')[2]; 
     await User.findOneAndUpdate(
         { telegramId: chatId.toString() },
         {
@@ -109,6 +109,62 @@ const handleSetModeInterval = async (bot, query) => {
         reply_markup: { inline_keyboard: getIntervalKeyboard(ch) }
     });
 };
+const handleSetDailyLimit = async (bot, query, user) => {
+    const chatId = query.message.chat.id;
+    const messageId = query.message.message_id;
+    const { data } = query;
+
+    const parts = data.split('_');
+    const chId = parts[2];
+    const limit = Math.min(200, Math.max(1, parseInt(parts[3])));
+
+    const updatedCh = await Channel.findByIdAndUpdate(
+        chId,
+        { dailyPostLimit: limit },
+        { new: true }
+    );
+
+    await bot.answerCallbackQuery(query.id, { text: `✅ Ліміт: ${limit} постів/день` });
+
+    return bot.editMessageReplyMarkup(
+        { inline_keyboard: getIntervalKeyboard(updatedCh) },
+        { chat_id: chatId, message_id: messageId }
+    );
+};
+const handleManualLimit = async (bot, chatId, msg, text, user) => {
+    const chId = user.tempData.targetChannelId;
+    const instructionMessageId = user.tempData.instructionMessageId;
+    const limit = parseInt(text);
+
+    await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+
+    if (isNaN(limit) || limit < 1 || limit > 200) {
+        const errorMsg = await bot.sendMessage(chatId, '❌ Введіть число від 1 до 200');
+        setTimeout(() => bot.deleteMessage(chatId, errorMsg.message_id).catch(() => {}), 3000);
+        return;
+    }
+
+    const updatedCh = await Channel.findByIdAndUpdate(
+        chId,
+        { dailyPostLimit: limit },
+        { new: true }
+    );
+
+    await User.findOneAndUpdate(
+        { telegramId: chatId.toString() },
+        { tempState: null, tempData: {} }
+    );
+
+    await bot.editMessageText('⏱ <b>Розклад та ліміт постів</b>\nОберіть режим або введіть час:', {
+        chat_id: chatId,
+        message_id: instructionMessageId,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: getIntervalKeyboard(updatedCh) }
+    }).catch(() => {});
+
+    const successMsg = await bot.sendMessage(chatId, `✅ Ліміт встановлено: ${limit} постів/день`);
+    setTimeout(() => bot.deleteMessage(chatId, successMsg.message_id).catch(() => {}), 3000);
+};
 
 module.exports = {
     handleEditIntervalMenu,
@@ -116,5 +172,7 @@ module.exports = {
     handleManualIntervalStart,
     handleOpenSchedule,
     handleToggleHour,
-    handleSetModeInterval
+    handleSetDailyLimit,
+    handleSetModeInterval,
+    handleManualLimit
 };

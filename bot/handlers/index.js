@@ -32,6 +32,7 @@ const User = require('../../models/User');
 
 const { handleStep1Name, handleStep2Id } = require('./text_states/wizardSteps');
 const { handleEditPrompt } = require('./text_states/promptEdit');
+const { handleManualLimit } = require('../callbacks/channel_modules/schedule');
 const { handleAwaitingBroadcast } = require('./text_states/broadcastFlow');
 const { handleWaitingTgSource, handleManualInterval } = require('./text_states/sourceAndInterval');
 const { handleAdminUserSearch, handleAdminPlanEdit } = require('./text_states/adminTextStates');
@@ -44,10 +45,10 @@ module.exports = async (bot, msg, callbacks) => {
         console.log('💰 Оплата отримана!');
 
         // Видаляємо службове повідомлення про оплату
-        await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+        await bot.deleteMessage(chatId, msg.message_id).catch(() => { });
 
         // Спробуємо видалити повідомлення з інвойсом (яке було перед цим)
-        await bot.deleteMessage(chatId, msg.message_id - 1).catch(() => {});
+        await bot.deleteMessage(chatId, msg.message_id - 1).catch(() => { });
 
         // TODO: тут виклик функції активації тарифу (відсутній в оригіналі)
         return;
@@ -70,7 +71,7 @@ module.exports = async (bot, msg, callbacks) => {
         const menuId = user.lastMenuMessageId;
 
         // Видаляємо повідомлення користувача для чистоти чату
-        await bot.deleteMessage(chatId, msg.message_id).catch(() => {});
+        await bot.deleteMessage(chatId, msg.message_id).catch(() => { });
 
         if (state === 'STEP_1_NAME') {
             return handleStep1Name(bot, chatId, text, menuId);
@@ -91,7 +92,9 @@ module.exports = async (bot, msg, callbacks) => {
         if (user.tempState === 'WAITING_MANUAL_INTERVAL') {
             return handleManualInterval(bot, chatId, msg, text, user);
         }
-
+        if (user.tempState === 'WAITING_MANUAL_LIMIT') {
+            return handleManualLimit(bot, chatId, msg, text, user);
+        }
         if (state === 'WAITING_FOR_ADMIN_USER_SEARCH') {
             return handleAdminUserSearch(bot, chatId, msg, text);
         }

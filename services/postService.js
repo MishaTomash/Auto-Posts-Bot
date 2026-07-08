@@ -40,7 +40,7 @@ const processSingleChannel = async (bot, channel) => {
     // 3. Визначаємо промпт
     const sub = user.subscription;
     const plan = sub?.plan?.toLowerCase() || 'free';
-    const isAiAllowed = sub?.hasCustomPrompt === true || (plan !== 'free' && plan !== 'none');
+    const isAiAllowed = sub?.canCustomPrompt === true || (plan !== 'free' && plan !== 'none');
 
     return isAiAllowed ? channel.aiPrompt : null;
 };
@@ -237,7 +237,7 @@ const processSource = async (bot, channel, source, user, promptToUse) => {
             // --- Ліміт каналу на день ---
             const freshChannel = await Channel.findById(channel._id);
             const channelLimit = freshChannel.dailyPostLimit ?? 10;
-            const channelUsed  = freshChannel.todayPostCount  ?? 0;
+            const channelUsed = freshChannel.todayPostCount ?? 0;
 
             if (channelUsed >= channelLimit) {
                 console.log(`🛑 Денний ліміт каналу ${channel.channelUsername} вичерпано (${channelUsed}/${channelLimit})`);
@@ -250,7 +250,7 @@ const processSource = async (bot, channel, source, user, promptToUse) => {
                         `Канал <b>${channel.channelUsername}</b> опублікував ${channelLimit} постів сьогодні.\n` +
                         `Публікації відновляться завтра о 00:00.`,
                         { parse_mode: 'HTML' }
-                    ).catch(() => {});
+                    ).catch(() => { });
                 }
                 break;
             }

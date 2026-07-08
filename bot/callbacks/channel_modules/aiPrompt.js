@@ -11,7 +11,10 @@ const handleEditPromptMenu = async (bot, query, user) => {
     const { data } = query;
 
     const chId = data.replace('edit_prompt_', '');
-    const canEdit = user.role === 'admin' || user.subscription?.hasCustomPrompt;
+
+    // ✅ Завжди беремо свіжого юзера з БД — щоб підписка була актуальна
+    const freshUser = await User.findOne({ telegramId: chatId.toString() });
+    const canEdit = freshUser?.role === 'admin' || freshUser?.subscription?.hasCustomPrompt === true;
 
     if (!canEdit) {
         return bot.editMessageText(

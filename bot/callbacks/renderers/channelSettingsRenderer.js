@@ -1,6 +1,7 @@
 // bot/callbacks/renderers/channelSettingsRenderer.js
 // Рендер картки налаштувань каналу (статус, інтервал, AI промпт, остання перевірка).
 
+const User = require('../../../models/User');
 const { getChannelSettingsKeyboard } = require('../../keyboards/channel');
 
 const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
@@ -12,8 +13,13 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
         ? 'Бот моніторить джерела та публікує новини.'
         : 'Бот ігнорує нові пости, поки ви його не запустите.';
 
-    const isCustom = channel.aiPrompt !== null && channel.aiPrompt !== undefined;
-    const aiStatus = isCustom ? '🟡 Кастомний' : '🟢 Стандартний';
+    // ✅ Свіжий юзер з БД — щоб підписка була актуальна після оплати
+    const freshUser = await User.findOne({ telegramId: chatId.toString() });
+    const hasPrompt = freshUser?.subscription?.hasCustomPrompt === true || freshUser?.role === 'admin';
+    const isCustom = hasPrompt && channel.aiPrompt !== null && channel.aiPrompt !== undefined;
+    const aiStatus = !hasPrompt
+        ? '🔒 Недоступно на FREE'
+        : isCustom ? '🟡 Кастомний' : '🟢 Стандартний';
 
     const lastCheckDate = channel.lastCheckAt;
     const isNeverChecked = !lastCheckDate || lastCheckDate.getTime() === 0;
@@ -47,7 +53,7 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: getChannelSettingsKeyboard(channel, user) }
+        reply_markup: { inline_keyboard: getChannelSettingsKeyboard(channel, freshUser) }
     }).catch(err => {
         if (!err.message.includes('message is not modified')) console.error(err);
     });

@@ -15,7 +15,7 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
 
     // ✅ Свіжий юзер з БД — щоб підписка була актуальна після оплати
     const freshUser = await User.findOne({ telegramId: chatId.toString() });
-    const hasPrompt = freshUser?.subscription?.hasCustomPrompt === true || freshUser?.role === 'admin';
+    const hasPrompt = freshUser?.role === 'admin' || freshUser?.subscription?.canCustomPrompt === true;
     const isCustom = hasPrompt && channel.aiPrompt !== null && channel.aiPrompt !== undefined;
     const aiStatus = !hasPrompt
         ? '🔒 Недоступно на FREE'
@@ -29,7 +29,7 @@ const renderChannelSettings = async (bot, chatId, messageId, channel, user) => {
 
     // Ліміт постів
     const limit = channel.dailyPostLimit || 10;
-    const used  = channel.todayPostCount  || 0;
+    const used = channel.todayPostCount || 0;
     const remaining = Math.max(0, limit - used);
     const totalBlocks = 8;
     const filledBlocks = Math.round((used / limit) * totalBlocks);

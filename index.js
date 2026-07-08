@@ -117,7 +117,7 @@ bot.on('successful_payment', async (msg) => {
                     'subscription.expiresAt': newExpiration,
                     'subscription.maxChannels': planData.maxChannels,
                     'subscription.maxPostsPerDay': planData.maxPostsPerDay,
-                    'subscription.hasCustomPrompt': planData.hasCustomPrompt,
+                    'subscription.canCustomPrompt': planData.hasCustomPrompt ?? false,
                     'subscription.expiryReminderSent': false
                 }
             },

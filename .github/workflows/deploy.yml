@@ -3,16 +3,13 @@ name: Deploy Auto-Posts-Bot
 on:
   push:
     branches:
-      - main # перевір, чи у тебе main, чи master
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -31,18 +28,4 @@ jobs:
 
             npm ci --omit=dev
 
-            pm2 restart "auto-posts-bot" --update-env || pm2 start index.js --name "auto-posts-bot"
-            # Переходимо в папку проекту або клонуємо її, якщо це перший раз
-            if [ ! -d "$HOME/auto-posts-bot" ]; then
-              git clone https://github.com/${{ github.repository }}.git ~/auto-posts-bot
-              cd ~/auto-posts-bot
-            else
-              cd ~/auto-posts-bot
-              git pull origin main
-            fi
-
-            # Встановлюємо залежності
-            npm install
-
-            # Запускаємо або перезапускаємо бота в PM2 через головний index.js
             pm2 restart "auto-posts-bot" --update-env || pm2 start index.js --name "auto-posts-bot"

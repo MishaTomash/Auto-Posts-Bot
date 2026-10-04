@@ -16,7 +16,26 @@ const { initTgClient } = require('./services/tgParserService');
 const { showTimeSelection, showPinSelection } = require('./bot/callbacks/channel_modules/scheduledPosts.js');
 const { initScheduledPostsScheduler } = require('./scheduler/index.js');
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+    polling: { interval: 300, params: { timeout: 30 } },
+    // Обриваємо запит, який завис без відповіді: інакше polling чекає вічно і бот мовчить
+    request: { timeout: 60000 },
+});
+
+// Серія помилок polling (502/429 від Telegram) → виходимо, PM2 перезапустить процес
+let pollingErrors = [];
+bot.on('polling_error', (err) => {
+    const now = Date.now();
+    pollingErrors = pollingErrors.filter((t) => now - t < 5 * 60 * 1000);
+    pollingErrors.push(now);
+    if (pollingErrors.length === 1 || pollingErrors.length % 20 === 0) {
+        console.error(`[polling_error] ${err.code}: ${err.message} (за 5 хв: ${pollingErrors.length})`);
+    }
+    if (pollingErrors.length >= 100) {
+        console.error('[polling_error] Забагато помилок за 5 хв, перезапуск процесу');
+        process.exit(1);
+    }
+});
 setupBotCommands(bot);
 initScheduledPostsScheduler(bot);
 

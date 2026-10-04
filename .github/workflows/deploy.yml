@@ -20,17 +20,29 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            # Переходимо в папку проекту або клонуємо її, якщо це перший раз
-            if [ ! -d "~/auto-posts-bot" ]; then
+            set -e
+            if [ ! -d "$HOME/auto-posts-bot" ]; then
               git clone https://github.com/${{ github.repository }}.git ~/auto-posts-bot
               cd ~/auto-posts-bot
             else
               cd ~/auto-posts-bot
               git pull origin main
             fi
-            
+
+            npm ci --omit=dev
+
+            pm2 restart "auto-posts-bot" --update-env || pm2 start index.js --name "auto-posts-bot"
+            # Переходимо в папку проекту або клонуємо її, якщо це перший раз
+            if [ ! -d "$HOME/auto-posts-bot" ]; then
+              git clone https://github.com/${{ github.repository }}.git ~/auto-posts-bot
+              cd ~/auto-posts-bot
+            else
+              cd ~/auto-posts-bot
+              git pull origin main
+            fi
+
             # Встановлюємо залежності
             npm install
-            
+
             # Запускаємо або перезапускаємо бота в PM2 через головний index.js
             pm2 restart "auto-posts-bot" --update-env || pm2 start index.js --name "auto-posts-bot"
